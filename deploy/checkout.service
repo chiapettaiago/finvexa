@@ -1,0 +1,22 @@
+[Unit]
+Description=Checkout - controle financeiro Flask
+After=network.target
+
+[Service]
+Type=simple
+User=iago
+Group=iago
+WorkingDirectory=/srv/compartilhada/Iago/projects/checkout
+EnvironmentFile=-/srv/compartilhada/Iago/projects/checkout/.env
+Environment=COOKIE_SECURE=true
+Environment=TRUST_PROXY=true
+ExecStart=/srv/compartilhada/Iago/projects/checkout/.venv/bin/gunicorn --workers 1 --threads 2 --timeout 30 --keep-alive 3 --max-requests 1000 --max-requests-jitter 100 --bind 0.0.0.0:5000 --bind 127.0.0.1:5050 --access-logfile - --error-logfile - app:app
+Restart=always
+RestartSec=3
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/srv/compartilhada/Iago/projects/checkout/instance
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+{% extends 'base.html' %}{% block title %}Relatório compartilhado | {{ app_name }}{% endblock %}{% block content %}
+<article class="shared-report-shell">
+  <header class="shared-report-header">
+    <div class="shared-brand"><span class="shared-brand-mark">F</span><span>{{ app_name }}</span></div>
+    <span class="shared-access">Relatório compartilhado</span>
+  </header>
+  <section class="shared-report-intro">
+    <span class="eyebrow">Visão financeira mensal</span>
+    <h1>{{ months[selected.month-1] }} de {{ selected.year }}</h1>
+    <p>Relatório enviado por <strong>{{ sender_name }}</strong></p>
+    <small>Visualização temporária e protegida</small>
+  </section>
+  <section class="shared-summary" aria-label="Resumo financeiro">
+    <article><span>Receitas previstas</span><strong>{{ income|brl }}</strong><small>{{ received|brl }} recebido</small></article>
+    <article><span>Despesas previstas</span><strong>{{ expenses|brl }}</strong><small>{{ paid|brl }} pago</small></article>
+    <article class="shared-balance"><span>Saldo previsto</span><strong>{{ (income-expenses)|brl }}</strong><small>Planejamento do mês</small></article>
+    <article class="shared-balance shared-realized"><span>Saldo realizado</span><strong>{{ (received-paid)|brl }}</strong><small>Valores já concluídos</small></article>
+  </section>
+  <div class="shared-report-sections">
+    {% for group in entry_groups %}<section class="shared-group"><header><div><span class="eyebrow">Lançamentos</span><h2>{{ group.title }}</h2></div><span>{{ group.entries|length }} {{ 'item' if group.entries|length == 1 else 'itens' }}</span></header><div class="scroll"><table><thead><tr><th>Descrição</th><th>Data</th><th>Valor</th><th>Situação</th><th>Comprovante</th></tr></thead><tbody>{% for e in group.entries %}<tr><td><strong>{{ e.description }}</strong></td><td>{% if e.category == 'dia_a_dia' %}{{ e.expense_date.strftime('%d/%m/%Y') }}{% else %}{{ e.due.strftime('%d/%m/%Y') if e.due else 'Sem data' }}{% endif %}</td><td class="amount">{{ e.amount|brl }}</td><td><span class="shared-status {{ 'settled' if e.paid else '' }}">{{ 'Pago' if e.paid and e.kind == 'despesa' else 'Recebido' if e.paid else 'Pendente' }}</span></td><td>{% if e.paid and e.receipt_file %}<a class="receipt-button shared-receipt-button" href="{{ url_for('shared_receipt', token=share_token, id=e.id) }}" data-receipt-title="{{ e.description|e }}" data-receipt-name="{{ e.receipt_name|e }}" data-receipt-type="{{ e.receipt_mimetype }}">Ver comprovante</a>{% elif e.paid %}<span class="shared-no-receipt">Não enviado</span>{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="5" class="muted">Nenhum lançamento neste grupo.</td></tr>{% endfor %}</tbody></table></div></section>{% endfor %}
+  </div>
+  <footer class="shared-report-footer">Relatório gerado com {{ app_name }} · {{ app_slogan }}</footer>
+</article>
+<dialog id="receipt-modal" class="modal receipt-viewer" aria-labelledby="receipt-viewer-title"><div class="receipt-viewer-head"><div class="receipt-file-icon">▧</div><div><span class="eyebrow">Comprovante de pagamento</span><h2 id="receipt-viewer-title">Comprovante</h2><small id="receipt-viewer-name"></small></div><div class="receipt-viewer-actions"><a id="receipt-open" class="button button-secondary" href="#" target="_blank" rel="noopener">Abrir arquivo</a><a id="receipt-download" class="button button-secondary" href="#" download>↓ Baixar</a><button class="icon-button" type="button" data-close aria-label="Fechar">×</button></div></div><div class="receipt-stage"><div id="receipt-loading" class="receipt-loading"><span></span>Carregando comprovante…</div><p id="receipt-error" role="alert" hidden>Não foi possível carregar a prévia. Use “Abrir arquivo” ou “Baixar” para acessar o comprovante.</p><img id="receipt-image" alt="Prévia do comprovante" hidden><iframe id="receipt-pdf" title="Prévia do comprovante em PDF" hidden></iframe></div></dialog>
+{% endblock %}

@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel"><div class="modal-head"><div><h1>Arquivo muito grande</h1><p>Envie imagens ou comprovantes de até 20 MB. Selecione um arquivo menor e tente novamente.</p></div></div><div class="panel-head"><a class="button" href="{{ url_for('account') if request.endpoint == 'update_profile' else url_for('index', modal='entry') }}">Voltar ao formulário</a></div></section>
+{% endblock %}
