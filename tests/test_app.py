@@ -93,7 +93,7 @@ def test_login_create_entry_and_import(tmp_path):
     })
     with app.app_context():
         db.create_all()
-        db.session.add(User(email='teste@exemplo.com', password=generate_password_hash('senha-segura')))
+        db.session.add(User(email='teste@exemplo.com', password=generate_password_hash('senha-segura'), plan='padrao'))
         db.session.commit()
     client = app.test_client()
     favicon = client.get('/favicon.ico')
@@ -152,10 +152,14 @@ def test_login_create_entry_and_import(tmp_path):
         assert new_user.is_admin is True
         new_user_id = new_user.id
     token = csrf(client)
-    response = client.post(f'/admin/users/{new_user_id}/ai-limit', data={'csrf': token, 'ai_monthly_limit': '3'}, follow_redirects=True)
+    response = client.post(f'/admin/users/{new_user_id}/plan', data={'csrf': token, 'plan': 'premium'}, follow_redirects=True)
     assert response.status_code == 200
     with app.app_context():
-        assert db.session.get(User, new_user_id).ai_monthly_limit == 3
+        assert db.session.get(User, new_user_id).plan == 'premium'
+    token = csrf(client)
+    client.post(f'/admin/users/{new_user_id}/plan', data={'csrf': token, 'plan': 'invalido'})
+    with app.app_context():
+        assert db.session.get(User, new_user_id).plan == 'premium'
     token = csrf(client)
     response = client.post('/entry/new', data={'csrf': token, 'description': 'Aluguel', 'kind': 'despesa', 'month': '2026-09', 'due': '2026-09-10', 'amount': '800.00', 'repeat': '1'})
     assert response.status_code == 302
@@ -316,3 +320,99 @@ def test_login_create_entry_and_import(tmp_path):
         assert deleted_entry.deleted_at is not None
     assert client.post(f'/entry/{deleted_entry_id}/toggle', data={'csrf': csrf(client)}).status_code == 404
     assert client.get(f'/entry/{deleted_entry_id}/receipt').status_code == 404
+
+
+def test_plan_limits_share_links(tmp_path):
+    app = create_app({'TESTING': True, 'SQLALCHEMY_DATABASE_URI': f'sqlite:///{tmp_path / "planos.db"}', 'RECEIPT_UPLOAD_FOLDER': str(tmp_path / 'receipts')})
+    with app.app_context():
+        db.create_all()
+        db.session.add(User(email='p@exemplo.com', password=generate_password_hash('senha-segura'), plan='basico'))
+        db.session.commit()
+    client = app.test_client()
+    client.post('/login', data={'csrf': csrf(client), 'email': 'p@exemplo.com', 'password': 'senha-segura'})
+    blocked = client.post('/reports/share', data={'csrf': csrf(client), 'month': '2026-09'}, follow_redirects=True)
+    assert 'Básico não inclui'.encode() in blocked.data
+    with app.app_context():
+        user = db.session.query(User).one()
+        assert user.plan_info['ai'] == 2
+        user.plan = 'padrao'
+        db.session.commit()
+    for _ in range(5):
+        assert 'share=' in client.post('/reports/share', data={'csrf': csrf(client), 'month': '2026-09'}).headers['Location']
+    over = client.post('/reports/share', data={'csrf': csrf(client), 'month': '2026-09'}, follow_redirects=True)
+    assert 'limite de 5 links'.encode() in over.data
+
+
+def test_landing_page_for_visitors_and_dashboard_for_users(tmp_path):
+    app = create_app({'TESTING': True, 'SQLALCHEMY_DATABASE_URI': f'sqlite:///{tmp_path / "landing.db"}', 'RECEIPT_UPLOAD_FOLDER': str(tmp_path / 'receipts')})
+    with app.app_context():
+        db.create_all()
+        db.session.add(User(email='l@exemplo.com', password=generate_password_hash('senha-segura')))
+        db.session.commit()
+    client = app.test_client()
+    landing = client.get('/')
+    assert landing.status_code == 200
+    assert b'Sou cliente' in landing.data and b'href="/login"' in landing.data
+    assert b'49,90' in landing.data and b'style="' not in landing.data
+    client.post('/login', data={'csrf': csrf(client), 'email': 'l@exemplo.com', 'password': 'senha-segura'})
+    assert b'Sou cliente' not in client.get('/').data
+
+
+def test_subscription_creates_account_only_after_payment(tmp_path, monkeypatch):
+    import app as app_module
+    from app import Subscription
+    monkeypatch.setenv('MP_ACCESS_TOKEN', 'token-teste')
+    monkeypatch.delenv('MP_WEBHOOK_SECRET', raising=False)
+    remote = {}
+
+    def fake_mp(method, path, payload=None):
+        if method == 'POST':
+            remote.update(payload, id='pre-1', status='pending')
+            return {'id': 'pre-1', 'init_point': 'https://www.mercadopago.com.br/checkout/pre-1'}
+        return dict(remote)
+
+    monkeypatch.setattr(app_module, 'mp_request', fake_mp)
+    app = create_app({'TESTING': True, 'SQLALCHEMY_DATABASE_URI': f'sqlite:///{tmp_path / "assinatura.db"}', 'RECEIPT_UPLOAD_FOLDER': str(tmp_path / 'receipts')})
+    with app.app_context():
+        db.create_all()
+    client = app.test_client()
+    assert client.get('/assinar/inexistente').status_code == 404
+    page = client.post('/assinar/padrao', data={'csrf': csrf(client), 'email': 'Cliente@Exemplo.com'})
+    assert page.status_code == 200 and b'checkout/pre-1' in page.data
+    assert remote['auto_recurring']['transaction_amount'] == 49.9
+    with app.app_context():
+        subscription = db.session.query(Subscription).one()
+        token = subscription.token
+        assert subscription.status == 'pending' and subscription.email == 'cliente@exemplo.com'
+    # Pagamento pendente: não há cadastro e nenhuma conta é criada.
+    assert client.get('/cadastro/' + token).status_code == 410
+    assert b'Aguardando' in client.get('/assinatura/retorno?ref=' + token).data
+    with app.app_context():
+        assert db.session.query(User).count() == 0
+    # Pagamento confirmado no Mercado Pago libera o cadastro com o plano contratado.
+    remote['status'] = 'authorized'
+    back = client.get('/assinatura/retorno?ref=' + token)
+    assert back.status_code == 302 and back.headers['Location'].endswith('/cadastro/' + token)
+    done = client.post('/cadastro/' + token, data={'csrf': csrf(client), 'name': 'Cliente', 'username': 'cliente', 'password': 'senha-bem-longa'})
+    assert done.status_code == 302
+    with app.app_context():
+        user = db.session.query(User).one()
+        assert user.plan == 'padrao' and user.email == 'cliente@exemplo.com'
+    assert client.get('/cadastro/' + token).status_code == 410
+    # Cancelamento via webhook bloqueia o login.
+    remote['status'] = 'cancelled'
+    assert client.post('/webhooks/mercadopago', json={'data': {'id': 'pre-1'}}).status_code == 200
+    client.post('/logout', data={'csrf': csrf(client)})
+    blocked = client.post('/login', data={'csrf': csrf(client), 'email': 'cliente', 'password': 'senha-bem-longa'})
+    assert 'assinatura está inativa'.encode() in blocked.data
+
+
+def test_subscription_unavailable_without_token_and_webhook_signature(tmp_path, monkeypatch):
+    monkeypatch.delenv('MP_ACCESS_TOKEN', raising=False)
+    monkeypatch.setenv('MP_WEBHOOK_SECRET', 'segredo')
+    app = create_app({'TESTING': True, 'SQLALCHEMY_DATABASE_URI': f'sqlite:///{tmp_path / "sem.db"}', 'RECEIPT_UPLOAD_FOLDER': str(tmp_path / 'receipts')})
+    with app.app_context():
+        db.create_all()
+    client = app.test_client()
+    assert client.get('/assinar/basico').status_code == 503
+    assert client.post('/webhooks/mercadopago', json={'data': {'id': 'x'}}, headers={'x-signature': 'ts=1,v1=errado'}).status_code == 401

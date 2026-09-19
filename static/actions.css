@@ -564,3 +564,15 @@ html[data-theme="dark"] .flash.error { background: #412324; color: #f5aaa4; }
   #logout-modal { max-height: none; overflow: hidden; }
   #logout-modal form.modal-actions { padding: 16px 20px calc(16px + env(safe-area-inset-bottom)) !important; }
 }
+
+/* Seletor de plano (administração) */
+.limit-form select { appearance: none; -webkit-appearance: none; min-width: 260px; padding: 10px 40px 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236d7b87' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 13px center; color: var(--ink); font-weight: 650; font-size: 13.5px; cursor: pointer; box-shadow: 0 1px 2px rgba(27,43,55,.05); transition: border-color .15s, box-shadow .15s, background-color .15s; }
+.limit-form select:hover { border-color: #b9c8c5; }
+.limit-form select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(23,107,93,.14); }
+.limit-form .button-secondary { border-radius: 12px; padding: 10px 16px; font-size: 13.5px; }
+.limit-form .button-secondary:hover { border-color: var(--accent); color: var(--accent); }
+html[data-theme="dark"] .limit-form select { border-color: #35474b; background-color: #101b1d; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239fb1b5' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); color: var(--ink); }
+html[data-theme="dark"] .limit-form select:hover { border-color: #4b6468; }
+html[data-theme="dark"] .limit-form select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(82,184,163,.16); }
+html[data-theme="dark"] .limit-form select option { background: #101b1d; color: var(--ink); }
+@media (max-width: 520px) { .limit-form { flex-wrap: wrap; } .limit-form select { min-width: 0; flex: 1 1 100%; } }

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ app_name }} | {{ app_slogan }}</title>
+  <meta name="description" content="{{ app_name }}: organize contas, receitas e despesas, receba sugestões de IA sobre o que pagar primeiro e compartilhe relatórios financeiros com segurança.">
+  <meta name="theme-color" content="#0b1a1d">
+  <meta property="og:title" content="{{ app_name }} | {{ app_slogan }}"><meta property="og:description" content="Organize, planeje e decida melhor com uma plataforma financeira com IA."><meta property="og:type" content="website">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='landing.css') }}">
+</head>
+<body>
+<header class="lp-header">
+  <div class="lp-wrap lp-header-inner">
+    <a class="lp-brand" href="#topo" aria-label="{{ app_name }}"><span class="lp-mark">F</span>{{ app_name }}</a>
+    <nav class="lp-nav" aria-label="Seções">
+      <a href="#recursos">Recursos</a><a href="#como-funciona">Como funciona</a><a href="#planos">Planos</a><a href="#duvidas">Dúvidas</a>
+    </nav>
+    <a class="lp-btn lp-btn-ghost" href="{{ url_for('login') }}">Sou cliente</a>
+  </div>
+</header>
+
+<main id="topo">
+  <section class="lp-hero">
+    <div class="lp-wrap lp-hero-grid">
+      <div class="lp-hero-copy">
+        <span class="lp-eyebrow">Finanças com inteligência</span>
+        <h1>{{ app_slogan }}</h1>
+        <p>Registre receitas e despesas, acompanhe vencimentos e descubra com IA qual conta pagar primeiro. Tudo em um painel simples, no computador ou no celular.</p>
+        <div class="lp-cta">
+          <a class="lp-btn lp-btn-primary" href="#planos">Ver planos</a>
+          <a class="lp-btn lp-btn-outline" href="{{ url_for('login') }}">Sou cliente</a>
+        </div>
+        <ul class="lp-trust"><li>Relatórios em PDF e Excel</li><li>Importação de planilhas</li><li>Tema claro e escuro</li></ul>
+      </div>
+      <div class="lp-hero-visual" aria-hidden="true">
+        <div class="lp-mock">
+          <div class="lp-mock-bar"><span></span><span></span><span></span></div>
+          <div class="lp-mock-cards">
+            <div><small>Receitas</small><strong>R$ 6.500,00</strong></div>
+            <div><small>Despesas</small><strong>R$ 4.120,00</strong></div>
+            <div class="lp-mock-good"><small>Saldo previsto</small><strong>R$ 2.380,00</strong></div>
+          </div>
+          <svg class="lp-mock-chart" viewBox="0 0 320 110" role="img" aria-label="Gráfico ilustrativo">
+            <g fill="#2dd4bf"><rect x="10" y="50" width="16" height="50" rx="4"/><rect x="60" y="38" width="16" height="62" rx="4"/><rect x="110" y="44" width="16" height="56" rx="4"/><rect x="160" y="26" width="16" height="74" rx="4"/><rect x="210" y="34" width="16" height="66" rx="4"/><rect x="260" y="18" width="16" height="82" rx="4"/></g>
+            <g fill="#5b7f86"><rect x="30" y="62" width="16" height="38" rx="4"/><rect x="80" y="58" width="16" height="42" rx="4"/><rect x="130" y="66" width="16" height="34" rx="4"/><rect x="180" y="52" width="16" height="48" rx="4"/><rect x="230" y="60" width="16" height="40" rx="4"/><rect x="280" y="48" width="16" height="52" rx="4"/></g>
+          </svg>
+          <div class="lp-mock-ai"><span>✦</span><p><strong>Finvexa AI</strong>Pague primeiro o aluguel, que vence em 3 dias. Depois, a conta de energia.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="recursos" class="lp-section">
+    <div class="lp-wrap">
+      <div class="lp-head"><span class="lp-eyebrow">Recursos</span><h2>Tudo para organizar, planejar e decidir melhor</h2><p>Menos planilha solta, mais clareza sobre o que entra, o que sai e o que fazer em seguida.</p></div>
+      <div class="lp-grid">
+        <article class="lp-card"><span class="lp-ico"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></span><h3>Controle de lançamentos</h3><p>Receitas, despesas fixas e gastos do dia a dia separados, com vencimento, situação e comprovantes de pagamento.</p></article>
+        <article class="lp-card"><span class="lp-ico"><svg viewBox="0 0 24 24"><path d="m12 3 1.4 4.6L18 9l-4.6 1.4L12 15l-1.4-4.6L6 9l4.6-1.4zM18.5 15l.7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7z"/></svg></span><h3>Sugestões com IA</h3><p>Descubra qual conta pagar em seguida, com previsão diária de gasto baseada no seu saldo real do mês.</p></article>
+        <article class="lp-card"><span class="lp-ico"><svg viewBox="0 0 24 24"><path d="M5 20V10m7 10V4m7 16v-7"/></svg></span><h3>Relatórios claros</h3><p>Compare receitas e despesas mês a mês e exporte tudo em PDF ou Excel quando precisar.</p></article>
+        <article class="lp-card"><span class="lp-ico"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4m8-4v4M4 10h16"/></svg></span><h3>Planejamento anual</h3><p>Veja o ano inteiro em uma grade e antecipe os meses mais apertados.</p></article>
+        <article class="lp-card"><span class="lp-ico"><svg viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg></span><h3>Importação de planilhas</h3><p>Traga seus dados de um arquivo Excel em poucos cliques, com modelo pronto para baixar.</p></article>
+        <article class="lp-card"><span class="lp-ico"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></span><h3>Compartilhamento seguro</h3><p>Gere links temporários do relatório do mês para contador, família ou parceiro, com expiração automática.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section id="como-funciona" class="lp-section lp-alt">
+    <div class="lp-wrap">
+      <div class="lp-head"><span class="lp-eyebrow">Como funciona</span><h2>Do primeiro lançamento à decisão em três passos</h2></div>
+      <ol class="lp-steps">
+        <li><span>1</span><h3>Registre ou importe</h3><p>Cadastre lançamentos manualmente ou importe sua planilha de Excel.</p></li>
+        <li><span>2</span><h3>Acompanhe o mês</h3><p>Veja saldo previsto, o que já foi pago e o que ainda está pendente.</p></li>
+        <li><span>3</span><h3>Decida com apoio da IA</h3><p>Receba uma ordem sugerida de pagamentos e compartilhe relatórios quando quiser.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="planos" class="lp-section">
+    <div class="lp-wrap">
+      <div class="lp-head"><span class="lp-eyebrow">Planos</span><h2>Planos para cada momento financeiro</h2><p>Escolha o plano ideal para organizar, planejar e decidir melhor.</p></div>
+      <div class="lp-plans">
+        {% for key, plan in plans.items() %}
+        <a class="lp-plan{% if key == 'padrao' %} lp-plan-featured{% endif %}" href="{{ url_for('subscribe', plan=key) }}" aria-label="Assinar o plano {{ plan.name }}">
+          {% if key == 'padrao' %}<span class="lp-badge">Mais popular</span>{% endif %}
+          <h3>{{ plan.name }}</h3>
+          <p class="lp-plan-sub">{{ {'basico': 'Para começar', 'padrao': 'Para evoluir', 'premium': 'Para máxima liberdade'}[key] }}</p>
+          <p class="lp-price"><span>R$</span>{{ ('%.2f'|format(plan.price)).replace('.', ',') }}<small>/mês</small></p>
+          <ul>
+            <li class="lp-yes">{{ plan.ai }} interações com IA por mês</li>
+            {% if plan.share_links is none %}<li class="lp-yes">Links de compartilhamento ilimitados</li>
+            {% elif plan.share_links %}<li class="lp-yes">Até {{ plan.share_links }} links de compartilhamento</li>
+            {% else %}<li class="lp-no">Sem compartilhamento por links</li>{% endif %}
+            <li class="lp-yes">Relatórios em PDF e Excel</li>
+            <li class="lp-yes">Importação de planilhas</li>
+          </ul>
+          <span class="lp-btn {{ 'lp-btn-primary' if key == 'padrao' else 'lp-btn-outline' }}">{{ {'basico': 'Começar agora', 'padrao': 'Escolher Padrão', 'premium': 'Escolher Premium'}[key] }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section id="duvidas" class="lp-section lp-alt">
+    <div class="lp-wrap lp-narrow">
+      <div class="lp-head"><span class="lp-eyebrow">Dúvidas</span><h2>Perguntas frequentes</h2></div>
+      <details class="lp-faq"><summary>A IA acessa minhas contas bancárias?</summary><p>Não. A IA analisa apenas os lançamentos que você cadastrou no {{ app_name }}. Não há conexão com bancos.</p></details>
+      <details class="lp-faq"><summary>Posso mudar de plano depois?</summary><p>Sim. Seu plano define o limite mensal de interações com IA e de links de compartilhamento, e pode ser ajustado quando você precisar.</p></details>
+      <details class="lp-faq"><summary>Posso usar no celular?</summary><p>Sim. O {{ app_name }} funciona no navegador do computador, tablet e celular, com tema claro e escuro.</p></details>
+      <details class="lp-faq"><summary>Como funciona o compartilhamento de relatórios?</summary><p>Você gera um link criptografado do relatório de um mês. Ele expira em 3 horas e pode ser consultado em Meus links.</p></details>
+      <details class="lp-faq"><summary>Posso levar minha planilha atual?</summary><p>Sim. Você importa arquivos .xlsx e pode baixar um modelo para facilitar.</p></details>
+    </div>
+  </section>
+
+  <section class="lp-final">
+    <div class="lp-wrap">
+      <h2>Pronto para decidir melhor com seu dinheiro?</h2>
+      <p>Escolha um plano e comece a organizar suas finanças hoje.</p>
+      <div class="lp-cta lp-cta-center"><a class="lp-btn lp-btn-primary" href="#planos">Ver planos</a><a class="lp-btn lp-btn-outline" href="{{ url_for('login') }}">Sou cliente</a></div>
+    </div>
+  </section>
+</main>
+
+<footer class="lp-footer"><div class="lp-wrap lp-footer-inner"><a class="lp-brand" href="#topo"><span class="lp-mark">F</span>{{ app_name }}</a><small>Orientação geral; confirme multas, juros e prioridades antes de decidir.</small><a href="{{ url_for('login') }}">Sou cliente</a></div></footer>
+</body>
+</html>

@@ -1,0 +1,3 @@
+{% extends 'base.html' %}{% block title %}Redirecionando | {{ app_name }}{% endblock %}
+{% block content %}<meta http-equiv="refresh" content="0;url={{ checkout_url }}">
+<section class="login-shell"><div class="login-intro"><span class="eyebrow">Pagamento</span><h1>Levando você ao Mercado Pago…</h1><p>Se nada acontecer, use o botão ao lado.</p></div><div class="modal login-modal"><div class="modal-head"><div><h2>Continuar para o pagamento</h2></div></div><div class="modal-actions"><a class="button button-primary" href="{{ checkout_url }}" rel="noopener">Abrir pagamento</a></div></div></section>{% endblock %}

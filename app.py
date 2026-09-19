@@ -1,11 +1,14 @@
 import calendar
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
 import secrets
 import unicodedata
+import urllib.error
+import urllib.request
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -14,6 +17,7 @@ from io import BytesIO
 
 import click
 from dotenv import load_dotenv
+from sqlalchemy.engine import URL
 from cryptography.fernet import Fernet, InvalidToken
 from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
 from flask_sqlalchemy import SQLAlchemy
@@ -33,6 +37,14 @@ from xml.sax.saxutils import escape
 load_dotenv()
 db = SQLAlchemy()
 MONTHS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+
+
+PLANS = {
+    "basico": {"name": "Básico", "price": Decimal("19.90"), "ai": 2, "share_links": 0},
+    "padrao": {"name": "Padrão", "price": Decimal("49.90"), "ai": 10, "share_links": 5},
+    "premium": {"name": "Premium", "price": Decimal("79.90"), "ai": 15, "share_links": None},
+}
+DEFAULT_PLAN = "basico"
 
 
 def format_brl(value):
@@ -60,6 +72,11 @@ class User(db.Model):
     avatar_file = db.Column(db.String(80))
     is_admin = db.Column(db.Boolean, nullable=False, default=False)
     ai_monthly_limit = db.Column(db.Integer, nullable=False, default=10)
+    plan = db.Column(db.String(20), nullable=False, default=DEFAULT_PLAN)
+
+    @property
+    def plan_info(self):
+        return PLANS.get(self.plan) or PLANS[DEFAULT_PLAN]
 
 class Entry(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -111,6 +128,35 @@ class UserAccessLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
     accessed_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class Subscription(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(64), nullable=False, unique=True)
+    plan = db.Column(db.String(20), nullable=False)
+    email = db.Column(db.String(254), nullable=False, index=True)
+    mp_preapproval_id = db.Column(db.String(64), index=True)
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), index=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+def mp_request(method, path, payload=None):
+    """Chamada à API do Mercado Pago; isolada para poder ser substituída nos testes."""
+    access_token = os.environ.get("MP_ACCESS_TOKEN")
+    if not access_token:
+        raise RuntimeError("Mercado Pago não configurado.")
+    request_ = urllib.request.Request(
+        "https://api.mercadopago.com" + path,
+        data=json.dumps(payload).encode() if payload is not None else None,
+        method=method,
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request_, timeout=15) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f"Mercado Pago respondeu {error.code}: {error.read().decode(errors='replace')[:500]}") from error
 
 
 def utc_datetime(value):
@@ -412,20 +458,39 @@ def create_app(config=None):
     if not os.environ.get("SECRET_KEY") and not os.path.exists(key_path):
         with open(key_path, "w", opener=lambda p, f: os.open(p, f, 0o600)) as f:
             f.write(secrets.token_hex(32))
-    database_url = os.environ.get("DATABASE_URL", "sqlite:///financas.db")
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url and os.environ.get("DB_HOST"):
+        database_url = URL.create(
+            "mysql+pymysql",
+            username=os.environ.get("DB_USER"),
+            password=os.environ.get("DB_PASS"),
+            host=os.environ["DB_HOST"].strip(),
+            port=int(os.environ.get("DB_PORT", "3306")),
+            database=os.environ.get("DB_NAME"),
+            query={"charset": os.environ.get("DB_CHARSET", "utf8mb4")},
+        ).render_as_string(hide_password=False)
+    database_url = database_url or "sqlite:///financas.db"
     engine_options = {"pool_pre_ping": True}
     if database_url.startswith("mysql"):
-        engine_options.update(pool_size=3, max_overflow=2, pool_recycle=1800)
+        engine_options.update(pool_size=3, max_overflow=2, pool_recycle=1800, connect_args={"connect_timeout": int(os.environ.get("DB_CONNECT_TIMEOUT", "5"))})
     app.config.update(SECRET_KEY=os.environ.get("SECRET_KEY") or open(key_path).read(), APP_NAME=os.environ.get("APP_NAME", "Finvexa"), APP_SLOGAN=os.environ.get("APP_SLOGAN", "Seus números, decisões mais inteligentes."), SQLALCHEMY_DATABASE_URI=database_url, SQLALCHEMY_ENGINE_OPTIONS=engine_options, SQLALCHEMY_TRACK_MODIFICATIONS=False, MAX_CONTENT_LENGTH=21*1024*1024, SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "true")
     app.config.setdefault("RECEIPT_UPLOAD_FOLDER", os.path.join(app.instance_path, "receipts"))
     app.config.setdefault("AVATAR_UPLOAD_FOLDER", os.path.join(app.instance_path, "avatars"))
     if config:
         app.config.update(config)
+        if "SQLALCHEMY_DATABASE_URI" in config and "SQLALCHEMY_ENGINE_OPTIONS" not in config and not config["SQLALCHEMY_DATABASE_URI"].startswith("mysql"):
+            app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
     share_key = base64.urlsafe_b64encode(hashlib.sha256(app.config["SECRET_KEY"].encode()).digest())
     app.config["REPORT_SHARE_CIPHER"] = Fernet(share_key)
+    if not app.testing:
+        from logging.handlers import RotatingFileHandler
+        file_handler = RotatingFileHandler(os.path.join(app.instance_path, "app.log"), maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+        file_handler.setLevel("WARNING")
+        file_handler.setFormatter(__import__("logging").Formatter("%(asctime)s %(levelname)s %(message)s"))
+        app.logger.addHandler(file_handler)
     db.init_app(app)
     if os.environ.get("TRUST_PROXY") == "true":
-        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
     app.jinja_env.filters["brl"] = format_brl
     def br_datetime(value):
         if not value:
@@ -445,10 +510,10 @@ def create_app(config=None):
     @app.context_processor
     def context():
         session.setdefault("csrf", secrets.token_hex(32))
-        return dict(csrf=session["csrf"], months=MONTHS, today=date.today(), current_user=g.current_user, app_name=app.config["APP_NAME"], app_slogan=app.config["APP_SLOGAN"])
+        return dict(csrf=session["csrf"], months=MONTHS, today=date.today(), current_user=g.current_user, plans=PLANS, app_name=app.config["APP_NAME"], app_slogan=app.config["APP_SLOGAN"])
     @app.before_request
     def csrf_check():
-        if request.method == "POST" and not secrets.compare_digest(session.get("csrf", "missing"), request.form.get("csrf", "")):
+        if request.method == "POST" and request.endpoint != "mercadopago_webhook" and not secrets.compare_digest(session.get("csrf", "missing"), request.form.get("csrf", "")):
             abort(400, "Sessão expirada. Atualize a página e tente novamente.")
     @app.after_request
     def headers(response):
@@ -481,12 +546,131 @@ def create_app(config=None):
                 abort(403)
             return fn(*args, **kwargs)
         return wrapper
+    def sync_subscription(subscription):
+        """Consulta o Mercado Pago e grava a situação real da assinatura; nunca confia em dados vindos do navegador."""
+        data = mp_request("GET", f"/preapproval/{subscription.mp_preapproval_id}")
+        if data.get("external_reference") != subscription.token:
+            raise ValueError("Assinatura não corresponde ao pedido.")
+        if data.get("status") in ("pending", "authorized", "paused", "cancelled"):
+            subscription.status = data["status"]
+            db.session.commit()
+        return subscription
+    @app.route("/assinar/<plan>", methods=["GET", "POST"])
+    def subscribe(plan):
+        if plan not in PLANS:
+            abort(404)
+        if not os.environ.get("MP_ACCESS_TOKEN"):
+            return render_template("subscribe.html", plan_key=plan, plan=PLANS[plan], unavailable=True), 503
+        if request.method == "POST":
+            email = request.form.get("email", "").strip().lower()
+            if "@" not in email or len(email) > 254:
+                flash("Informe um e-mail válido.", "error")
+            elif db.session.scalar(select(User).where(User.email == email)):
+                flash("Já existe uma conta com este e-mail. Use “Sou cliente” para entrar.", "error")
+            else:
+                subscription = Subscription(token=secrets.token_urlsafe(32), plan=plan, email=email)
+                db.session.add(subscription)
+                db.session.commit()
+                # O Mercado Pago não aceita, em várias configurações, URLs locais
+                # (localhost/127.0.0.1) como URL de retorno. Em desenvolvimento o
+                # webhook continua sendo suficiente para sincronizar o pagamento;
+                # em produção, PUBLIC_URL deve ser uma URL pública HTTPS.
+                base = os.environ.get("PUBLIC_URL", "").strip().rstrip("/")
+                payload = {
+                    "reason": f"{app.config['APP_NAME']} — plano {PLANS[plan]['name']}",
+                    "external_reference": subscription.token,
+                    "payer_email": email,
+                    "status": "pending",
+                    "auto_recurring": {"frequency": 1, "frequency_type": "months", "transaction_amount": float(PLANS[plan]["price"]), "currency_id": "BRL"},
+                }
+                if base:
+                    payload["back_url"] = base + url_for("subscription_return", ref=subscription.token)
+                try:
+                    created = mp_request("POST", "/preapproval", payload)
+                    if not created.get("id") or not created.get("init_point"):
+                        raise RuntimeError("Mercado Pago não retornou um checkout válido.")
+                    subscription.mp_preapproval_id = created["id"]
+                    db.session.commit()
+                    return render_template("subscribe_redirect.html", checkout_url=created["init_point"])
+                except Exception:
+                    db.session.rollback()
+                    app.logger.exception("Falha ao criar assinatura no Mercado Pago")
+                    flash("Não foi possível iniciar o pagamento agora. Tente novamente em instantes.", "error")
+        return render_template("subscribe.html", plan_key=plan, plan=PLANS[plan], unavailable=False)
+    @app.get("/assinatura/retorno")
+    def subscription_return():
+        subscription = db.session.scalar(select(Subscription).where(Subscription.token == request.args.get("ref", ""))) or abort(404)
+        if subscription.mp_preapproval_id:
+            try:
+                sync_subscription(subscription)
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Falha ao consultar a assinatura no Mercado Pago")
+        if subscription.status == "authorized":
+            return redirect(url_for("register_subscriber", token=subscription.token) if not subscription.user_id else url_for("login"))
+        return render_template("subscribe_status.html", subscription=subscription, plan=PLANS[subscription.plan])
+    @app.post("/webhooks/mercadopago")
+    def mercadopago_webhook():
+        payload = request.get_json(silent=True) or {}
+        data_id = str(request.args.get("data.id") or (payload.get("data") or {}).get("id") or "")
+        secret = os.environ.get("MP_WEBHOOK_SECRET")
+        if secret:
+            parts = dict(item.split("=", 1) for item in request.headers.get("x-signature", "").split(",") if "=" in item)
+            manifest = f"id:{data_id.lower()};request-id:{request.headers.get('x-request-id', '')};ts:{parts.get('ts', '')};"
+            expected = hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
+            if not secrets.compare_digest(expected, parts.get("v1", "")):
+                abort(401)
+        subscription = db.session.scalar(select(Subscription).where(Subscription.mp_preapproval_id == data_id)) if data_id else None
+        if subscription:
+            try:
+                sync_subscription(subscription)
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Falha ao processar webhook do Mercado Pago")
+                return "", 500
+        return "", 200
+    @app.route("/cadastro/<token>", methods=["GET", "POST"])
+    def register_subscriber(token):
+        subscription = db.session.scalar(select(Subscription).where(Subscription.token == token))
+        if not subscription or subscription.status != "authorized" or subscription.user_id:
+            abort(410, "Este link de cadastro é inválido, já foi utilizado ou o pagamento ainda não foi confirmado.")
+        if request.method == "POST":
+            name = request.form.get("name", "").strip()
+            username = request.form.get("username", "").strip().lower()
+            password = request.form.get("password", "")
+            try:
+                if not name or len(name) > 120:
+                    raise ValueError("Informe seu nome com até 120 caracteres.")
+                if not username or len(username) > 50 or not username.replace("_", "").replace(".", "").isalnum():
+                    raise ValueError("Use somente letras, números, ponto ou sublinhado no nome de usuário.")
+                if len(password) < 10:
+                    raise ValueError("A senha deve ter pelo menos 10 caracteres.")
+                if db.session.scalar(select(User).where(or_(User.email == subscription.email, User.username == username))):
+                    raise ValueError("O e-mail ou nome de usuário já está em uso.")
+                user = User(name=name, username=username, email=subscription.email, password=generate_password_hash(password), plan=subscription.plan)
+                db.session.add(user)
+                db.session.flush()
+                subscription.user_id = user.id
+                db.session.add(UserAccessLog(user_id=user.id))
+                db.session.commit()
+                session.clear()
+                session["user_id"] = user.id
+                flash("Cadastro concluído. Boas-vindas!", "success")
+                return redirect(url_for("index"))
+            except ValueError as error:
+                db.session.rollback()
+                flash(str(error), "error")
+        return render_template("register_subscriber.html", subscription=subscription, plan=PLANS[subscription.plan])
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if request.method == "POST":
             identity = request.form.get("email", "").strip().lower()
             user = db.session.scalar(select(User).where(or_(User.email == identity, User.username == identity)))
             if user and check_password_hash(user.password, request.form.get("password", "")):
+                subscription = db.session.scalar(select(Subscription).where(Subscription.user_id == user.id).order_by(Subscription.id.desc()))
+                if subscription and subscription.status in ("cancelled", "paused"):
+                    flash("Sua assinatura está inativa. Assine novamente para voltar a acessar.", "error")
+                    return render_template("login.html")
                 session.clear()
                 session["user_id"] = user.id
                 db.session.add(UserAccessLog(user_id=user.id))
@@ -497,7 +681,12 @@ def create_app(config=None):
     @app.get("/account")
     @login_required
     def account():
-        return render_template("account.html", user=db.session.get(User, session["user_id"]))
+        user = db.session.get(User, session["user_id"])
+        month_start = datetime(date.today().year, date.today().month, 1, tzinfo=timezone.utc)
+        ai_used = db.session.scalar(select(func.count()).select_from(ClaudeAnalysis).where(ClaudeAnalysis.user_id == user.id, ClaudeAnalysis.created_at >= month_start))
+        now = datetime.now(timezone.utc)
+        links_active = sum(1 for link in db.session.scalars(select(SharedReport).where(SharedReport.user_id == user.id)) if utc_datetime(link.expires_at) > now)
+        return render_template("account.html", user=user, ai_used=ai_used, links_active=links_active)
     @app.route("/invite/<token>", methods=["GET", "POST"])
     def accept_invitation(token):
         invitation = db.session.scalar(select(UserInvitation).where(UserInvitation.token == token))
@@ -587,20 +776,17 @@ def create_app(config=None):
             db.session.rollback()
             flash(str(error), "error")
         return redirect(url_for("admin_users"))
-    @app.post("/admin/users/<int:id>/ai-limit")
+    @app.post("/admin/users/<int:id>/plan")
     @admin_required
-    def update_ai_limit(id):
+    def update_plan(id):
         user = db.session.get(User, id) or abort(404)
-        try:
-            limit = int(request.form.get("ai_monthly_limit", ""))
-            if not 0 <= limit <= 1000:
-                raise ValueError
-        except ValueError:
-            flash("Informe um limite entre 0 e 1000 sugestões por mês.", "error")
+        plan = request.form.get("plan", "")
+        if plan not in PLANS:
+            flash("Selecione um plano válido.", "error")
         else:
-            user.ai_monthly_limit = limit
+            user.plan = plan
             db.session.commit()
-            flash(f"Limite mensal de IA atualizado para {user.name or user.username or user.email}.", "success")
+            flash(f"Plano de {user.name or user.username or user.email} alterado para {PLANS[plan]['name']}.", "success")
         return redirect(url_for("admin_users"))
     @app.post("/account/profile")
     @login_required
@@ -681,8 +867,9 @@ def create_app(config=None):
         session.clear()
         return redirect(url_for("login"))
     @app.get("/")
-    @login_required
     def index():
+        if not session.get("user_id"):
+            return render_template("landing.html")
         try:
             selected = datetime.strptime(request.args.get("month", date.today().strftime("%Y-%m")), "%Y-%m").date()
         except ValueError:
@@ -806,6 +993,13 @@ def create_app(config=None):
     @login_required
     def create_shared_report():
         selected, _entries, _income, _expenses = report_data(request.form.get("month"))
+        share_limit = g.current_user.plan_info["share_links"]
+        if share_limit is not None:
+            now = datetime.now(timezone.utc)
+            active = sum(1 for link in db.session.scalars(select(SharedReport).where(SharedReport.user_id == session["user_id"])) if utc_datetime(link.expires_at) > now)
+            if active >= share_limit:
+                flash("O plano Básico não inclui links de compartilhamento." if share_limit == 0 else f"Você atingiu o limite de {share_limit} links ativos do plano {g.current_user.plan_info['name']}. Aguarde um link expirar ou mude de plano.", "error")
+                return redirect(url_for("reports", month=selected.strftime("%Y-%m")))
         payload = json.dumps({"user_id": session["user_id"], "month": selected.strftime("%Y-%m")}).encode()
         token = app.config["REPORT_SHARE_CIPHER"].encrypt(payload).decode()
         created_at = datetime.now(timezone.utc)
@@ -987,8 +1181,9 @@ def create_app(config=None):
         current_user = g.current_user
         usage_start = datetime(date.today().year, date.today().month, 1, tzinfo=timezone.utc)
         usage = db.session.scalar(select(db.func.count()).select_from(ClaudeAnalysis).where(ClaudeAnalysis.user_id == current_user.id, ClaudeAnalysis.created_at >= usage_start))
-        if usage >= current_user.ai_monthly_limit:
-            return jsonify(error=f"Você atingiu o limite de {current_user.ai_monthly_limit} sugestões de IA deste mês."), 429
+        ai_limit = current_user.plan_info["ai"]
+        if usage >= ai_limit:
+            return jsonify(error=f"Você atingiu o limite de {ai_limit} sugestões de IA do plano {current_user.plan_info['name']} neste mês."), 429
         entries = db.session.scalars(select(Entry).where(Entry.user_id == session["user_id"], Entry.month == selected, Entry.deleted_at.is_(None))).all()
         pending = [entry for entry in entries if not entry.paid]
         income = sum((entry.amount for entry in entries if entry.kind == "receita"), Decimal(0))
@@ -1126,6 +1321,11 @@ Responda em português do Brasil, de forma curta e prática. Em toda resposta, c
                 connection.execute(text("ALTER TABLE user ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
             if "ai_monthly_limit" not in user_columns:
                 connection.execute(text("ALTER TABLE user ADD COLUMN ai_monthly_limit INTEGER NOT NULL DEFAULT 10"))
+            if "plan" not in user_columns:
+                connection.execute(text("ALTER TABLE user ADD COLUMN plan VARCHAR(20) NOT NULL DEFAULT 'basico'"))
+                # Quem já usava o sistema mantém o acesso atual: administradores no Premium e os demais no Padrão.
+                connection.execute(text("UPDATE user SET plan = 'premium' WHERE is_admin = 1"))
+                connection.execute(text("UPDATE user SET plan = 'padrao' WHERE is_admin = 0"))
             connection.execute(text("UPDATE user SET is_admin = 1 WHERE username = 'chiapettaiago'"))
         click.echo("Estrutura do banco atualizada.")
     @app.cli.command("create-user")
