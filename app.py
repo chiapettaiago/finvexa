@@ -473,7 +473,7 @@ def create_app(config=None):
     engine_options = {"pool_pre_ping": True}
     if database_url.startswith("mysql"):
         engine_options.update(pool_size=3, max_overflow=2, pool_recycle=1800, connect_args={"connect_timeout": int(os.environ.get("DB_CONNECT_TIMEOUT", "5"))})
-    app.config.update(SECRET_KEY=os.environ.get("SECRET_KEY") or open(key_path).read(), APP_NAME=os.environ.get("APP_NAME", "Finvexa"), APP_SLOGAN=os.environ.get("APP_SLOGAN", "Seus números, decisões mais inteligentes."), SQLALCHEMY_DATABASE_URI=database_url, SQLALCHEMY_ENGINE_OPTIONS=engine_options, SQLALCHEMY_TRACK_MODIFICATIONS=False, MAX_CONTENT_LENGTH=21*1024*1024, SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "true")
+    app.config.update(SECRET_KEY=os.environ.get("SECRET_KEY") or open(key_path).read(), APP_NAME=os.environ.get("APP_NAME", "Finvexa"), APP_SLOGAN=os.environ.get("APP_SLOGAN", "Seus números, decisões mais inteligentes."), SQLALCHEMY_DATABASE_URI=database_url, SQLALCHEMY_ENGINE_OPTIONS=engine_options, SQLALCHEMY_TRACK_MODIFICATIONS=False, MAX_CONTENT_LENGTH=21*1024*1024, SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "true", PERMANENT_SESSION_LIFETIME=timedelta(minutes=60))
     app.config.setdefault("RECEIPT_UPLOAD_FOLDER", os.path.join(app.instance_path, "receipts"))
     app.config.setdefault("AVATAR_UPLOAD_FOLDER", os.path.join(app.instance_path, "avatars"))
     if config:
@@ -506,6 +506,8 @@ def create_app(config=None):
 
     @app.before_request
     def load_current_user():
+        if session.get("user_id"):
+            session.permanent = True
         g.current_user = db.session.get(User, session["user_id"]) if session.get("user_id") else None
     @app.context_processor
     def context():
