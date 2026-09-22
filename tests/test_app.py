@@ -302,11 +302,32 @@ def test_login_create_entry_and_import(tmp_path):
         assert daily.due is None
     token = csrf(client)
     client.post('/entry/new', data={'csrf': token, 'description': 'Uber', 'kind': 'despesa', 'category': 'dia_a_dia', 'month': '2026-09', 'entry_date': '2026-09-05', 'amount': '13.27', 'repeat': 'never'})
-    page = client.get('/despesas-dia-a-dia?month=2026-09')
-    assert page.data.index(b'Mercado') < page.data.index(b'Uber')
     reports = client.get('/reports?month=2026-09')
-    assert b'Mercado' not in reports.data
-    assert b'Uber' not in reports.data
+    assert client.get('/despesas-dia-a-dia?month=2026-09').status_code == 404
+    assert reports.data.index(b'Mercado') < reports.data.index(b'Uber')
+    assert b'Mercado' in reports.data
+    assert b'Uber' in reports.data
+    assert b'data-report-table="dia-a-dia"' in reports.data
+    assert b'table-visibility-toggle' in reports.data
+    assert b'table-hidden' in reports.data
+    assert b'aria-expanded="false"' in reports.data
+    with app.app_context():
+        mercado_id = db.session.query(Entry).filter_by(description='Mercado').one().id
+        entries_before_edit = db.session.query(Entry).count()
+    edit_page = client.get(f'/entry/{mercado_id}/edit', follow_redirects=True)
+    assert f'data-id="{mercado_id}"'.encode() in edit_page.data
+    assert b'data-description="Mercado"' in edit_page.data
+    response = client.post(f'/entry/{mercado_id}/edit', data={
+        'csrf': csrf(client), 'description': 'Mercado semanal', 'kind': 'despesa',
+        'category': 'dia_a_dia', 'month': '2026-09', 'entry_date': '2026-09-12',
+        'amount': '150.00', 'repeat': 'never',
+    })
+    assert response.status_code == 302
+    with app.app_context():
+        assert db.session.query(Entry).count() == entries_before_edit
+        edited_daily = db.session.get(Entry, mercado_id)
+        assert edited_daily.description == 'Mercado semanal'
+        assert edited_daily.amount == Decimal('150.00')
     token = csrf(client)
     workbook = BytesIO()
     from openpyxl import Workbook

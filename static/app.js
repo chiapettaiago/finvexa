@@ -91,6 +91,23 @@ document.addEventListener('DOMContentLoaded', () => {
   if (kindField) kindField.addEventListener('change', updateEntryFields);
   if (categoryField) categoryField.addEventListener('change', updateEntryFields);
   if (copyShareButton) copyShareButton.addEventListener('click', async () => { const input = document.querySelector('.share-report input'); try { await navigator.clipboard.writeText(input.value); copyShareButton.textContent = 'Copiado'; } catch (_) { input.select(); document.execCommand('copy'); copyShareButton.textContent = 'Copiado'; } });
+  document.querySelectorAll('[data-report-table]').forEach((panel) => {
+    const toggle = panel.querySelector('.table-visibility-toggle');
+    if (!toggle) return;
+    const storageKey = `finvexa-report-table-${panel.dataset.reportTable}`;
+    const setHidden = (hidden) => {
+      panel.classList.toggle('table-hidden', hidden);
+      toggle.setAttribute('aria-expanded', String(!hidden));
+      toggle.setAttribute('aria-label', hidden ? 'Mostrar tabela' : 'Ocultar tabela');
+      toggle.title = hidden ? 'Mostrar tabela' : 'Ocultar tabela';
+    };
+    try { setHidden(localStorage.getItem(storageKey) !== 'visible'); } catch (_error) { setHidden(true); }
+    toggle.addEventListener('click', () => {
+      const hidden = !panel.classList.contains('table-hidden');
+      setHidden(hidden);
+      try { localStorage.setItem(storageKey, hidden ? 'hidden' : 'visible'); } catch (_error) { /* Preference won't persist when storage is blocked. */ }
+    });
+  });
   document.querySelectorAll('[data-copy-value]').forEach((button) => button.addEventListener('click', async () => { const input = document.getElementById(button.dataset.copyValue); try { await navigator.clipboard.writeText(input.value); } catch (_) { input.select(); document.execCommand('copy'); } button.textContent = 'Copiado'; }));
   document.querySelectorAll('.edit-trigger').forEach((button) => button.addEventListener('click', () => { entryForm.dataset.editing = 'true'; entryForm.action = newEntryAction.replace(/\/new$/, `/${button.dataset.id}/edit`); window.FinvexaPWA?.setBaseRevision(entryForm, button.dataset.revision); entryForm.elements.description.value = button.dataset.description; entryForm.elements.kind.value = button.dataset.kind; entryForm.elements.category.value = button.dataset.category || 'fixa'; entryForm.elements.month.value = button.dataset.month; entryForm.elements.entry_date.value = button.dataset.date; entryForm.elements.amount.value = button.dataset.amount; entryForm.elements.paid.checked = button.dataset.paid === 'true'; receiptHelp.textContent = button.dataset.receipt ? `Atual: ${button.dataset.receipt}. Selecione outro arquivo para substituir.` : 'Arquivo opcional de até 20 MB.'; entryTitle.textContent = 'Editar lançamento'; updateEntryFields(); }));
   const confirmModal = document.getElementById('confirm-modal');

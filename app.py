@@ -534,7 +534,7 @@ def create_app(config=None):
         policy = "default-src self; style-src self; form-action self; frame-ancestors self" if receipt_preview else "default-src self; style-src self; form-action self; frame-ancestors none"
         response.headers["Content-Security-Policy"] = policy.replace("self", "\u0027self\u0027").replace("none", "\u0027none\u0027")
         response.headers["Cache-Control"] = "no-store"
-        if g.current_user and request.endpoint in {"index", "daily_expenses", "reports", "annual_planning", "account", "shared_links", "admin_users"}:
+        if g.current_user and request.endpoint in {"index", "reports", "annual_planning", "account", "shared_links", "admin_users"}:
             response.headers["X-PWA-User"] = str(g.current_user.id)
         return response
     @app.get("/healthz")
@@ -943,6 +943,7 @@ def create_app(config=None):
         group_definitions = (
             ("receitas", "Receitas", "Valores previstos para entrar", lambda entry: entry.kind == "receita"),
             ("fixas", "Despesas fixas", "Contas recorrentes e compromissos", lambda entry: entry.kind == "despesa" and entry.category != "dia_a_dia"),
+            ("dia-a-dia", "Despesas do dia a dia", "Gastos pontuais realizados no mês", lambda entry: entry.kind == "despesa" and entry.category == "dia_a_dia"),
         )
         entry_groups = []
         for key, title, subtitle, predicate in group_definitions:
@@ -958,18 +959,6 @@ def create_app(config=None):
         received = sum((e.amount for e in entries if e.kind == "receita" and e.paid), Decimal(0))
         analyses = db.session.scalars(select(ClaudeAnalysis).where(ClaudeAnalysis.user_id == session["user_id"]).order_by(ClaudeAnalysis.created_at.desc()).limit(30)).all()
         return render_template("index.html", entries=entries, entry_groups=entry_groups, selected=selected, expenses=expenses, income=income, paid=paid, received=received, analyses=analyses)
-    @app.get("/despesas-dia-a-dia")
-    @login_required
-    def daily_expenses():
-        try:
-            selected = datetime.strptime(request.args.get("month", date.today().strftime("%Y-%m")), "%Y-%m").date()
-        except ValueError:
-            abort(400)
-        entries = db.session.scalars(select(Entry).where(Entry.user_id == session["user_id"], Entry.month == selected, Entry.category == "dia_a_dia", Entry.kind == "despesa", Entry.deleted_at.is_(None))).all()
-        entries.sort(key=lambda entry: (entry.expense_date is None, entry.expense_date or date.min, entry.description.casefold()), reverse=True)
-        total = sum((entry.amount for entry in entries), Decimal(0))
-        paid = sum((entry.amount for entry in entries if entry.paid), Decimal(0))
-        return render_template("daily_expenses.html", entries=entries, selected=selected, total=total, paid=paid)
     @app.get("/api/entry-revisions")
     @login_required
     def entry_revisions():
@@ -992,6 +981,7 @@ def create_app(config=None):
         definitions = (
             ("receitas", "Receitas", "Valores previstos para entrar", lambda entry: entry.kind == "receita"),
             ("fixas", "Despesas fixas", "Contas recorrentes e compromissos", lambda entry: entry.kind == "despesa" and entry.category != "dia_a_dia"),
+            ("dia-a-dia", "Despesas do dia a dia", "Gastos pontuais realizados no mês", lambda entry: entry.kind == "despesa" and entry.category == "dia_a_dia"),
         )
         entry_groups = []
         for key, title, subtitle, predicate in definitions:
