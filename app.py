@@ -682,11 +682,41 @@ def create_app(config=None):
     @login_required
     def account():
         user = db.session.get(User, session["user_id"])
+        subscription = db.session.scalar(select(Subscription).where(Subscription.user_id == user.id).order_by(Subscription.id.desc()))
+        if subscription and subscription.mp_preapproval_id:
+            try:
+                sync_subscription(subscription)
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Falha ao sincronizar assinatura na conta")
         month_start = datetime(date.today().year, date.today().month, 1, tzinfo=timezone.utc)
         ai_used = db.session.scalar(select(func.count()).select_from(ClaudeAnalysis).where(ClaudeAnalysis.user_id == user.id, ClaudeAnalysis.created_at >= month_start))
         now = datetime.now(timezone.utc)
         links_active = sum(1 for link in db.session.scalars(select(SharedReport).where(SharedReport.user_id == user.id)) if utc_datetime(link.expires_at) > now)
-        return render_template("account.html", user=user, ai_used=ai_used, links_active=links_active)
+        return render_template("account.html", user=user, subscription=subscription, ai_used=ai_used, links_active=links_active)
+
+    @app.post("/account/subscription/cancel")
+    @login_required
+    def cancel_subscription():
+        user = db.session.get(User, session["user_id"])
+        subscription = db.session.scalar(select(Subscription).where(Subscription.user_id == user.id).order_by(Subscription.id.desc()))
+        if not subscription or not subscription.mp_preapproval_id:
+            flash("Não encontramos uma assinatura gerenciável para esta conta.", "error")
+        elif subscription.status in ("cancelled", "paused"):
+            flash("Sua assinatura já está inativa.", "error")
+        else:
+            try:
+                result = mp_request("PUT", f"/preapproval/{subscription.mp_preapproval_id}", {"status": "cancelled"})
+                if result.get("id") and result.get("id") != subscription.mp_preapproval_id:
+                    raise RuntimeError("Resposta de cancelamento inválida.")
+                subscription.status = "cancelled"
+                db.session.commit()
+                flash("Assinatura cancelada. Nenhuma nova cobrança será feita.", "success")
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Falha ao cancelar assinatura")
+                flash("Não foi possível cancelar a assinatura agora. Tente novamente.", "error")
+        return redirect(url_for("account"))
     @app.route("/invite/<token>", methods=["GET", "POST"])
     def accept_invitation(token):
         invitation = db.session.scalar(select(UserInvitation).where(UserInvitation.token == token))
