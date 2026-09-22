@@ -7,6 +7,7 @@
   const MAX_ATTEMPTS = 8;
   let syncing = false;
   const statusEl = document.getElementById('connection-status');
+  const config = document.getElementById('pwa-config')?.dataset || {};
 
   const notify = (state, message) => {
     if (!statusEl) return;
@@ -63,7 +64,9 @@
     const ids = [...new Set(controls.map(control => control.dataset.id || control.dataset.confirmAction?.match(/\/entry\/(\d+)\/(?:toggle|delete)/)?.[1] || control.href?.match(/\/entry\/(\d+)\/edit/)?.[1]).filter(Boolean))];
     if (!ids.length) return;
     try {
-      const response = await fetch(`/api/entry-revisions?ids=${ids.join(',')}`, { credentials: 'same-origin', cache: 'no-store' });
+      const revisionsUrl = new URL(config.revisionsUrl || 'api/entry-revisions', location.href);
+      revisionsUrl.searchParams.set('ids', ids.join(','));
+      const response = await fetch(revisionsUrl, { credentials: 'same-origin', cache: 'no-store' });
       if (!response.ok) return;
       const revisions = (await response.json()).revisions || {};
       controls.forEach(control => {
@@ -78,7 +81,7 @@
   const requestOptions = operation => ({ method: operation.method, headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', 'X-Idempotency-Key': operation.id }, body: new URLSearchParams(operation.payload), credentials: 'same-origin', redirect: 'manual' });
   const apiAvailable = async () => {
     if (navigator.onLine === false) return false;
-    try { const response = await fetch('/healthz', { cache: 'no-store', credentials: 'same-origin' }); return response.ok; } catch (_) { return false; }
+    try { const response = await fetch(config.healthUrl || 'healthz', { cache: 'no-store', credentials: 'same-origin' }); return response.ok; } catch (_) { return false; }
   };
   const sync = async () => {
     if (syncing || !(await apiAvailable())) return;
@@ -112,7 +115,7 @@
     } catch (_) { return false; }
   };
   const register = async () => {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register(config.workerUrl || 'sw.js').catch(() => {});
   };
   const init = () => {
     register();

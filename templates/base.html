@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='actions.css') }}">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
   <script src="{{ url_for('static', filename='pwa.js') }}" defer></script>
+  <meta id="pwa-config" data-health-url="{{ url_for('healthz') }}" data-revisions-url="{{ url_for('entry_revisions') }}" data-worker-url="{{ url_for('service_worker') }}">
 </head>
 <body>
 {% if session.user_id %}<div id="connection-status" class="connection-status" role="status" aria-live="polite" hidden></div>{% endif %}

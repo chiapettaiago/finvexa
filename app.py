@@ -538,6 +538,11 @@ def create_app(config=None):
     @app.get("/healthz")
     def healthz():
         return {"status": "ok"}
+    @app.get("/sw.js")
+    def service_worker():
+        response = send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
+        response.headers["Service-Worker-Allowed"] = request.script_root or "/"
+        return response
     @app.get("/favicon.ico")
     def favicon():
         return send_from_directory(app.static_folder, "favicon.svg", mimetype="image/svg+xml")
