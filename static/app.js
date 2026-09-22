@@ -55,6 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   const changeMonth = (value) => { const url = new URL(window.location.href); url.searchParams.set('month', value); url.searchParams.delete('modal'); url.searchParams.delete('edit'); window.location.assign(url); };
   if (monthInput) { monthInput.addEventListener('change', () => changeMonth(monthInput.value)); document.querySelectorAll('[data-month-step]').forEach((button) => button.addEventListener('click', () => { const [year, month] = monthInput.value.split('-').map(Number); const target = new Date(year, month - 1 + Number(button.dataset.monthStep), 1); changeMonth(`${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}`); })); }
+  document.querySelectorAll('[data-auto-submit]').forEach((field) => field.addEventListener('change', () => field.form.submit()));
   if (kindField) kindField.addEventListener('change', updateEntryFields);
   if (categoryField) categoryField.addEventListener('change', updateEntryFields);
   if (copyShareButton) copyShareButton.addEventListener('click', async () => { const input = document.querySelector('.share-report input'); try { await navigator.clipboard.writeText(input.value); copyShareButton.textContent = 'Copiado'; } catch (_) { input.select(); document.execCommand('copy'); copyShareButton.textContent = 'Copiado'; } });
