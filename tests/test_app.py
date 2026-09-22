@@ -15,6 +15,34 @@ def csrf(client):
         return session['csrf']
 
 
+def test_pwa_pages_are_marked_per_user_and_writes_confirm_json(tmp_path):
+    app = create_app({
+        'TESTING': True,
+        'SQLALCHEMY_DATABASE_URI': f"sqlite:///{tmp_path / 'pwa.db'}",
+        'SECRET_KEY': 'test-key',
+    })
+    with app.app_context():
+        db.create_all()
+        db.session.add(User(email='pwa@exemplo.com', password=generate_password_hash('senha-segura')))
+        db.session.commit()
+    client = app.test_client()
+    assert 'X-PWA-User' not in client.get('/login').headers
+    client.post('/login', data={'csrf': csrf(client), 'email': 'pwa@exemplo.com', 'password': 'senha-segura'})
+    page = client.get('/')
+    assert page.headers['X-PWA-User'] == '1'
+    assert b'data-pages=' in page.data
+    assert client.get('/reports').headers['X-PWA-User'] == '1'
+    response = client.post('/entry/new', data={
+        'csrf': csrf(client), 'description': 'Teste PWA', 'kind': 'despesa',
+        'category': 'dia_a_dia', 'month': '2026-09', 'entry_date': '2026-09-22',
+        'amount': '10.00', 'repeat': 'never',
+    }, headers={'Accept': 'application/json', 'X-Idempotency-Key': 'pwa-test-1'})
+    assert response.status_code == 200
+    assert response.json['status'] == 'saved'
+    with app.app_context():
+        assert db.session.query(Entry).filter_by(description='Teste PWA').count() == 1
+
+
 def test_claude_entry_data_keeps_income_and_expense_types_distinct():
     income = SimpleNamespace(
         description='Salário', kind='receita', category='receita', amount=Decimal('2500.00'),
@@ -274,10 +302,11 @@ def test_login_create_entry_and_import(tmp_path):
         assert daily.due is None
     token = csrf(client)
     client.post('/entry/new', data={'csrf': token, 'description': 'Uber', 'kind': 'despesa', 'category': 'dia_a_dia', 'month': '2026-09', 'entry_date': '2026-09-05', 'amount': '13.27', 'repeat': 'never'})
-    page = client.get('/?month=2026-09')
+    page = client.get('/despesas-dia-a-dia?month=2026-09')
     assert page.data.index(b'Mercado') < page.data.index(b'Uber')
     reports = client.get('/reports?month=2026-09')
-    assert reports.data.index(b'Mercado') < reports.data.index(b'Uber')
+    assert b'Mercado' not in reports.data
+    assert b'Uber' not in reports.data
     token = csrf(client)
     workbook = BytesIO()
     from openpyxl import Workbook

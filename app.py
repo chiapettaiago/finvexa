@@ -534,6 +534,8 @@ def create_app(config=None):
         policy = "default-src self; style-src self; form-action self; frame-ancestors self" if receipt_preview else "default-src self; style-src self; form-action self; frame-ancestors none"
         response.headers["Content-Security-Policy"] = policy.replace("self", "\u0027self\u0027").replace("none", "\u0027none\u0027")
         response.headers["Cache-Control"] = "no-store"
+        if g.current_user and request.endpoint in {"index", "daily_expenses", "reports", "annual_planning", "account", "shared_links", "admin_users"}:
+            response.headers["X-PWA-User"] = str(g.current_user.id)
         return response
     @app.get("/healthz")
     def healthz():
@@ -550,6 +552,8 @@ def create_app(config=None):
         @wraps(fn)
         def wrapper(*args, **kwargs):
             if not session.get("user_id"):
+                if request.accept_mimetypes.best == "application/json":
+                    return jsonify(error="Entre novamente para sincronizar as alterações."), 401
                 return redirect(url_for("login"))
             return fn(*args, **kwargs)
         return wrapper
@@ -1273,9 +1277,13 @@ def create_app(config=None):
                     except FileNotFoundError:
                         pass
                 flash("Lançamento salvo.", "success")
+                if request.accept_mimetypes.best == "application/json":
+                    return jsonify(status="saved"), 200
                 return redirect(url_for("index", month=month.strftime("%Y-%m")))
             except (ValueError, TypeError) as exc:
                 db.session.rollback()
+                if request.accept_mimetypes.best == "application/json":
+                    return jsonify(error=str(exc)), 400
                 flash(str(exc), "error")
         target_month = entry.month if entry else date.today().replace(day=1)
         return redirect(url_for("index", month=target_month.strftime("%Y-%m"), modal="entry", edit=id or ""))
@@ -1304,6 +1312,8 @@ def create_app(config=None):
         e.updated_at = datetime.now(timezone.utc)
         db.session.commit()
         finish_idempotency(operation_key)
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(status="saved"), 200
         return redirect(url_for("index", month=e.month.strftime("%Y-%m")))
     @app.post("/entry/<int:id>/delete")
     @login_required
@@ -1321,6 +1331,8 @@ def create_app(config=None):
         e.updated_at = datetime.now(timezone.utc)
         db.session.commit()
         finish_idempotency(operation_key)
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(status="saved"), 200
         flash("Lançamento excluído.", "success")
         return redirect(url_for("index", month=month))
     @app.post("/api/suggestions")
