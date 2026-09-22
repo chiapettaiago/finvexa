@@ -1,5 +1,5 @@
 from io import BytesIO
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
@@ -41,6 +41,27 @@ def test_pwa_pages_are_marked_per_user_and_writes_confirm_json(tmp_path):
     assert response.json['status'] == 'saved'
     with app.app_context():
         assert db.session.query(Entry).filter_by(description='Teste PWA').count() == 1
+
+
+def test_expired_invitation_cannot_create_account(tmp_path):
+    app = create_app({
+        'TESTING': True,
+        'SQLALCHEMY_DATABASE_URI': f"sqlite:///{tmp_path / 'expired-invite.db'}",
+        'SECRET_KEY': 'test-key',
+    })
+    with app.app_context():
+        db.create_all()
+        admin = User(email='admin@exemplo.com', password=generate_password_hash('senha-segura'), is_admin=True)
+        db.session.add(admin)
+        db.session.flush()
+        db.session.add(UserInvitation(email='', is_admin=False, token='expired-token', invited_by_id=admin.id, expires_at=datetime.now(timezone.utc) - timedelta(minutes=1)))
+        db.session.commit()
+    client = app.test_client()
+    assert client.get('/invite/expired-token').status_code == 410
+    response = client.post('/invite/expired-token', data={'csrf': csrf(client), 'name': 'Novo Usuário', 'email': 'novo@exemplo.com', 'username': 'novo', 'password': 'senha-segura'})
+    assert response.status_code == 410
+    with app.app_context():
+        assert db.session.query(User).count() == 1
 
 
 def test_claude_entry_data_keeps_income_and_expense_types_distinct():
@@ -160,15 +181,25 @@ def test_login_create_entry_and_import(tmp_path):
         invitation = db.session.query(UserInvitation).one()
         assert invitation.is_admin is True
         invitation_token = invitation.token
-    invitation_page = client.get(f'/invite/{invitation_token}')
+    assert f'value="/invite/{invitation_token}"'.encode() in invitation_response.data
+    assert b'127.0.0.1/invite/' not in invitation_response.data
+    invited_client = app.test_client()
+    invitation_page = invited_client.get(f'/invite/{invitation_token}')
     assert invitation_page.status_code == 200
-    registration = client.post(f'/invite/{invitation_token}', data={'csrf': csrf(client), 'name': 'Pessoa Convidada', 'email': 'convidado@exemplo.com', 'username': 'pessoa.convidada', 'password': 'senha-segura'}, follow_redirects=True)
-    assert registration.status_code == 200
+    invalid = invited_client.post(f'/invite/{invitation_token}', data={'csrf': csrf(invited_client), 'name': 'Pessoa Convidada', 'email': 'convidado@exemplo.com', 'username': 'pessoa.teste', 'password': 'senha-segura'})
+    assert invalid.status_code == 200
+    assert b'value="Pessoa Convidada"' in invalid.data
+    with app.app_context():
+        assert db.session.get(UserInvitation, invitation.id).used_at is None
+    registration = invited_client.post(f'/invite/{invitation_token}', data={'csrf': csrf(invited_client), 'name': 'Pessoa Convidada', 'email': 'convidado@exemplo.com', 'username': 'pessoa.convidada', 'password': 'senha-segura'})
+    assert registration.status_code == 302
+    assert registration.headers['Location'].endswith('/')
+    assert b'Cadastro conclu' in invited_client.get('/').data
     with app.app_context():
         invited_user = db.session.query(User).filter_by(email='convidado@exemplo.com').one()
         assert invited_user.is_admin is True
         assert db.session.get(UserInvitation, invitation.id).used_at is not None
-    assert client.get(f'/invite/{invitation_token}').status_code == 410
+    assert app.test_client().get(f'/invite/{invitation_token}').status_code == 410
     client.post('/logout', data={'csrf': csrf(client)})
     client.post('/login', data={'csrf': csrf(client), 'email': 'teste@exemplo.com', 'password': 'senha-segura'}, follow_redirects=True)
     token = csrf(client)

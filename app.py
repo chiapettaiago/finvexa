@@ -21,7 +21,7 @@ from sqlalchemy.engine import URL
 from cryptography.fernet import Fernet, InvalidToken
 from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func, inspect, or_, select, text
+from sqlalchemy import func, inspect, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -760,7 +760,15 @@ def create_app(config=None):
                 if db.session.scalar(select(User).where(or_(User.email == email, User.username == username))):
                     raise ValueError("O e-mail ou nome de usuário já está em uso.")
                 user = User(name=name, username=username, email=email, password=generate_password_hash(password), is_admin=invitation.is_admin)
-                invitation.used_at = now
+                claimed = db.session.execute(
+                    update(UserInvitation)
+                    .where(UserInvitation.id == invitation.id, UserInvitation.used_at.is_(None), UserInvitation.expires_at > now)
+                    .values(used_at=now)
+                    .execution_options(synchronize_session=False)
+                )
+                if claimed.rowcount != 1:
+                    db.session.rollback()
+                    abort(410, "Este convite expirou ou já foi utilizado.")
                 db.session.add(user)
                 db.session.flush()
                 db.session.add(UserAccessLog(user_id=user.id))
@@ -769,10 +777,10 @@ def create_app(config=None):
                 session["user_id"] = user.id
                 flash("Cadastro concluído. Boas-vindas!", "success")
                 return redirect(url_for("index"))
-            except ValueError as error:
+            except (ValueError, IntegrityError) as error:
                 db.session.rollback()
-                flash(str(error), "error")
-        return render_template("accept_invitation.html", invitation=invitation)
+                flash(str(error) if isinstance(error, ValueError) else "O e-mail ou nome de usuário já está em uso. Tente outro.", "error")
+        return render_template("accept_invitation.html", invitation=invitation, form_values=request.form)
     @app.route("/admin/users", methods=["GET", "POST"])
     @admin_required
     def admin_users():

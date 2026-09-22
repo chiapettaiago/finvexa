@@ -1,4 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.invite-link').forEach((input) => {
+    input.value = new URL(input.value, window.location.href).href;
+  });
   const sidebarToggle = document.getElementById('sidebar-toggle');
   if (sidebarToggle) {
     const collapsed = localStorage.getItem('finvexa-sidebar') === 'collapsed';
@@ -108,7 +111,19 @@ document.addEventListener('DOMContentLoaded', () => {
       try { localStorage.setItem(storageKey, hidden ? 'hidden' : 'visible'); } catch (_error) { /* Preference won't persist when storage is blocked. */ }
     });
   });
-  document.querySelectorAll('[data-copy-value]').forEach((button) => button.addEventListener('click', async () => { const input = document.getElementById(button.dataset.copyValue); try { await navigator.clipboard.writeText(input.value); } catch (_) { input.select(); document.execCommand('copy'); } button.textContent = 'Copiado'; }));
+  document.querySelectorAll('[data-copy-value]').forEach((button) => button.addEventListener('click', async () => {
+    const input = document.getElementById(button.dataset.copyValue);
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(input.value);
+      copied = true;
+    } catch (_) {
+      input.focus();
+      input.select();
+      try { copied = document.execCommand('copy'); } catch (_) { copied = false; }
+    }
+    button.textContent = copied ? 'Copiado' : 'Selecione e copie';
+  }));
   document.querySelectorAll('.edit-trigger').forEach((button) => button.addEventListener('click', () => { entryForm.dataset.editing = 'true'; entryForm.action = newEntryAction.replace(/\/new$/, `/${button.dataset.id}/edit`); window.FinvexaPWA?.setBaseRevision(entryForm, button.dataset.revision); entryForm.elements.description.value = button.dataset.description; entryForm.elements.kind.value = button.dataset.kind; entryForm.elements.category.value = button.dataset.category || 'fixa'; entryForm.elements.month.value = button.dataset.month; entryForm.elements.entry_date.value = button.dataset.date; entryForm.elements.amount.value = button.dataset.amount; entryForm.elements.paid.checked = button.dataset.paid === 'true'; receiptHelp.textContent = button.dataset.receipt ? `Atual: ${button.dataset.receipt}. Selecione outro arquivo para substituir.` : 'Arquivo opcional de até 20 MB.'; entryTitle.textContent = 'Editar lançamento'; updateEntryFields(); }));
   const confirmModal = document.getElementById('confirm-modal');
   document.querySelectorAll('.table-action[href$="/edit"]').forEach((editLink) => {
