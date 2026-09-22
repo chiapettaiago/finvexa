@@ -22,6 +22,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func, inspect, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -94,6 +95,14 @@ class Entry(db.Model):
     receipt_mimetype = db.Column(db.String(100))
     receipt_uploaded_at = db.Column(db.DateTime(timezone=True))
     deleted_at = db.Column(db.DateTime(timezone=True), index=True)
+    revision = db.Column(db.Integer, nullable=False, default=1)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), index=True, onupdate=lambda: datetime.now(timezone.utc))
+
+class IdempotencyKey(db.Model):
+    key = db.Column(db.String(100), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="processing")
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
 
 class ClaudeAnalysis(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -952,6 +961,16 @@ def create_app(config=None):
         total = sum((entry.amount for entry in entries), Decimal(0))
         paid = sum((entry.amount for entry in entries if entry.paid), Decimal(0))
         return render_template("daily_expenses.html", entries=entries, selected=selected, total=total, paid=paid)
+    @app.get("/api/entry-revisions")
+    @login_required
+    def entry_revisions():
+        raw_ids = request.args.get("ids", "")
+        try:
+            ids = [int(value) for value in raw_ids.split(",") if value][:100]
+        except ValueError:
+            return jsonify(error="IDs inválidos."), 400
+        entries = db.session.scalars(select(Entry).where(Entry.user_id == session["user_id"], Entry.id.in_(ids))).all() if ids else []
+        return jsonify(revisions={str(entry.id): entry.revision or 1 for entry in entries if entry.deleted_at is None})
     @app.get("/reports")
     @login_required
     def reports():
@@ -1139,14 +1158,58 @@ def create_app(config=None):
         return render_template("annual_planning.html", selected=selected, annual_rows=annual_rows)
     def owned(id):
         return db.session.scalar(select(Entry).where(Entry.id == id, Entry.user_id == session["user_id"], Entry.deleted_at.is_(None))) or abort(404)
+    def begin_idempotency():
+        key = request.headers.get("X-Idempotency-Key", "").strip()
+        if not key:
+            return None, None
+        if len(key) > 100:
+            abort(400, "Chave de idempotência inválida.")
+        existing = db.session.get(IdempotencyKey, key)
+        if existing:
+            if existing.user_id != session["user_id"]:
+                abort(409, "Chave de idempotência já utilizada.")
+            if existing.status == "completed":
+                return key, (jsonify(status="already_processed"), 200)
+            return key, (jsonify(error="Operação ainda está sendo processada."), 409)
+        try:
+            db.session.add(IdempotencyKey(key=key, user_id=session["user_id"], status="processing"))
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return begin_idempotency()
+        return key, None
+    def finish_idempotency(key, status="completed"):
+        if key:
+            operation = db.session.get(IdempotencyKey, key)
+            if operation:
+                operation.status = status
+                db.session.commit()
+    def revision_conflict(entry):
+        raw_revision = request.form.get("base_revision", "").strip()
+        if not raw_revision:
+            return None
+        try:
+            expected = int(raw_revision)
+        except ValueError:
+            return jsonify(error="Revisão inválida.", conflict=True), 409
+        if expected != (entry.revision or 1):
+            return jsonify(error="Este lançamento foi alterado no servidor. Revise os dados antes de sincronizar novamente.", conflict=True), 409
+        return None
     @app.route("/entry/new", methods=["GET", "POST"])
     @app.route("/entry/<int:id>/edit", methods=["GET", "POST"])
     @login_required
     def edit(id=None):
         entry = owned(id) if id else None
+        if entry:
+            conflict = revision_conflict(entry)
+            if conflict:
+                return conflict
         if request.method == "GET":
             target_month = entry.month if entry else date.today().replace(day=1)
-            return redirect(url_for("index", month=target_month.strftime("%Y-%m"), modal="entry", edit=id or ""))
+            params = {"month": target_month.strftime("%Y-%m"), "modal": "entry", "edit": id or ""}
+            if request.args.get("base_revision"):
+                params["base_revision"] = request.args["base_revision"]
+            return redirect(url_for("index", **params))
         if request.method == "POST":
             try:
                 description = request.form.get("description", "").strip()
@@ -1179,6 +1242,9 @@ def create_app(config=None):
                 if entry and category != "fixa":
                     entry.receipt_file = entry.receipt_name = entry.receipt_mimetype = None
                     entry.receipt_uploaded_at = None
+                operation_key, replay = begin_idempotency()
+                if replay:
+                    return replay
                 for offset in range(repeat):
                     month_index = month.year*12 + month.month-1+offset
                     target = date(month_index//12, month_index%12+1, 1)
@@ -1187,11 +1253,15 @@ def create_app(config=None):
                     obj.expense_date = entry_date if category == "dia_a_dia" else None
                     obj.due = None if category == "dia_a_dia" else entry_date if not offset or not entry_date else date(target.year, target.month, min(entry_date.day, calendar.monthrange(target.year, target.month)[1]))
                     obj.paid = request.form.get("paid") == "on" if offset == 0 else False
+                    if entry:
+                        obj.revision = (obj.revision or 1) + 1
+                        obj.updated_at = datetime.now(timezone.utc)
                     if receipt_data and offset == 0:
                         obj.receipt_file, obj.receipt_name, obj.receipt_mimetype = receipt_data
                         obj.receipt_uploaded_at = datetime.now(timezone.utc)
                     db.session.add(obj)
                 db.session.commit()
+                finish_idempotency(operation_key)
                 if old_receipt:
                     try:
                         os.remove(os.path.join(app.config["RECEIPT_UPLOAD_FOLDER"], old_receipt))
@@ -1218,16 +1288,34 @@ def create_app(config=None):
     @login_required
     def toggle(id):
         e = owned(id)
+        conflict = revision_conflict(e)
+        if conflict:
+            return conflict
+        operation_key, replay = begin_idempotency()
+        if replay:
+            return replay
         e.paid = not e.paid
+        e.revision = (e.revision or 1) + 1
+        e.updated_at = datetime.now(timezone.utc)
         db.session.commit()
+        finish_idempotency(operation_key)
         return redirect(url_for("index", month=e.month.strftime("%Y-%m")))
     @app.post("/entry/<int:id>/delete")
     @login_required
     def delete(id):
         e = owned(id)
+        conflict = revision_conflict(e)
+        if conflict:
+            return conflict
+        operation_key, replay = begin_idempotency()
+        if replay:
+            return replay
         month = e.month.strftime("%Y-%m")
         e.deleted_at = datetime.now(timezone.utc)
+        e.revision = (e.revision or 1) + 1
+        e.updated_at = datetime.now(timezone.utc)
         db.session.commit()
+        finish_idempotency(operation_key)
         flash("Lançamento excluído.", "success")
         return redirect(url_for("index", month=month))
     @app.post("/api/suggestions")
@@ -1371,6 +1459,10 @@ Responda em português do Brasil, de forma curta e prática. Em toda resposta, c
                 connection.execute(text("ALTER TABLE entry ADD COLUMN receipt_uploaded_at DATETIME"))
             if "deleted_at" not in columns:
                 connection.execute(text("ALTER TABLE entry ADD COLUMN deleted_at DATETIME"))
+            if "revision" not in columns:
+                connection.execute(text("ALTER TABLE entry ADD COLUMN revision INTEGER NOT NULL DEFAULT 1"))
+            if "updated_at" not in columns:
+                connection.execute(text("ALTER TABLE entry ADD COLUMN updated_at DATETIME"))
         user_columns = {column["name"] for column in inspect(db.engine).get_columns("user")}
         with db.engine.begin() as connection:
             if "name" not in user_columns:

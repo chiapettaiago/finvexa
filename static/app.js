@@ -75,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
     repeatField.hidden = !isExpense || isDaily || entryForm.dataset.editing === 'true';
     if (isDaily && !dateField.value) dateField.value = new Date().toISOString().slice(0, 10);
   }
-  function resetEntryForm() { if (!entryForm) return; entryForm.reset(); entryForm.dataset.editing = 'false'; entryForm.action = '/entry/new'; entryForm.elements.month.value = monthInput ? monthInput.value : new Date().toISOString().slice(0, 7); receiptHelp.textContent = 'Arquivo opcional de até 20 MB.'; entryTitle.textContent = 'Novo lançamento'; updateEntryFields(); }
+  function resetEntryForm() { if (!entryForm) return; entryForm.reset(); entryForm.dataset.editing = 'false'; entryForm.action = '/entry/new'; entryForm.elements.base_revision?.remove(); entryForm.elements.month.value = monthInput ? monthInput.value : new Date().toISOString().slice(0, 7); receiptHelp.textContent = 'Arquivo opcional de até 20 MB.'; entryTitle.textContent = 'Novo lançamento'; updateEntryFields(); }
   document.querySelectorAll('[data-open]').forEach((button) => button.addEventListener('click', () => { if (button.hasAttribute('data-new')) resetEntryForm(); openModal(button.dataset.open); }));
   document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
   document.querySelectorAll('dialog').forEach((dialog) => {
@@ -91,7 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (categoryField) categoryField.addEventListener('change', updateEntryFields);
   if (copyShareButton) copyShareButton.addEventListener('click', async () => { const input = document.querySelector('.share-report input'); try { await navigator.clipboard.writeText(input.value); copyShareButton.textContent = 'Copiado'; } catch (_) { input.select(); document.execCommand('copy'); copyShareButton.textContent = 'Copiado'; } });
   document.querySelectorAll('[data-copy-value]').forEach((button) => button.addEventListener('click', async () => { const input = document.getElementById(button.dataset.copyValue); try { await navigator.clipboard.writeText(input.value); } catch (_) { input.select(); document.execCommand('copy'); } button.textContent = 'Copiado'; }));
-  document.querySelectorAll('.edit-trigger').forEach((button) => button.addEventListener('click', () => { entryForm.dataset.editing = 'true'; entryForm.action = `/entry/${button.dataset.id}/edit`; entryForm.elements.description.value = button.dataset.description; entryForm.elements.kind.value = button.dataset.kind; entryForm.elements.category.value = button.dataset.category || 'fixa'; entryForm.elements.month.value = button.dataset.month; entryForm.elements.entry_date.value = button.dataset.date; entryForm.elements.amount.value = button.dataset.amount; entryForm.elements.paid.checked = button.dataset.paid === 'true'; receiptHelp.textContent = button.dataset.receipt ? `Atual: ${button.dataset.receipt}. Selecione outro arquivo para substituir.` : 'Arquivo opcional de até 20 MB.'; entryTitle.textContent = 'Editar lançamento'; updateEntryFields(); }));
+  document.querySelectorAll('.edit-trigger').forEach((button) => button.addEventListener('click', () => { entryForm.dataset.editing = 'true'; entryForm.action = `/entry/${button.dataset.id}/edit`; window.FinvexaPWA?.setBaseRevision(entryForm, button.dataset.revision); entryForm.elements.description.value = button.dataset.description; entryForm.elements.kind.value = button.dataset.kind; entryForm.elements.category.value = button.dataset.category || 'fixa'; entryForm.elements.month.value = button.dataset.month; entryForm.elements.entry_date.value = button.dataset.date; entryForm.elements.amount.value = button.dataset.amount; entryForm.elements.paid.checked = button.dataset.paid === 'true'; receiptHelp.textContent = button.dataset.receipt ? `Atual: ${button.dataset.receipt}. Selecione outro arquivo para substituir.` : 'Arquivo opcional de até 20 MB.'; entryTitle.textContent = 'Editar lançamento'; updateEntryFields(); }));
   const confirmModal = document.getElementById('confirm-modal');
   document.querySelectorAll('.table-action[href$="/edit"]').forEach((editLink) => {
     const match = editLink.getAttribute('href').match(/^\/entry\/(\d+)\/edit$/);
@@ -106,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     deleteButton.dataset.confirmText = 'O lançamento deixará de aparecer no sistema, mas será preservado no banco de dados.';
     editLink.insertAdjacentElement('afterend', deleteButton);
   });
-  document.querySelectorAll('[data-confirm-action]').forEach((button) => button.addEventListener('click', () => { document.getElementById('confirm-form').action = button.dataset.confirmAction; document.getElementById('confirm-title').textContent = button.dataset.confirmTitle; document.getElementById('confirm-text').textContent = button.dataset.confirmText; openModal('confirm-modal'); }));
+  document.querySelectorAll('[data-confirm-action]').forEach((button) => button.addEventListener('click', () => { const confirmForm = document.getElementById('confirm-form'); confirmForm.action = button.dataset.confirmAction; window.FinvexaPWA?.setBaseRevision(confirmForm, button.dataset.revision); document.getElementById('confirm-title').textContent = button.dataset.confirmTitle; document.getElementById('confirm-text').textContent = button.dataset.confirmText; openModal('confirm-modal'); }));
   const receiptModal = document.getElementById('receipt-modal');
   if (receiptModal) {
     const receiptImage = document.getElementById('receipt-image');
@@ -194,5 +194,5 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     openModal('import-modal');
   }
-  if (query.get('modal') === 'suggestions') openModal('suggestions-modal'); if (query.get('modal') === 'entry') { const edit = query.get('edit'); const trigger = edit && document.querySelector(`.edit-trigger[data-id="${CSS.escape(edit)}"]`); if (trigger) trigger.click(); else { resetEntryForm(); openModal('entry-modal'); } }
+  if (query.get('modal') === 'suggestions') openModal('suggestions-modal'); if (query.get('modal') === 'entry') { const edit = query.get('edit'); const trigger = edit && document.querySelector(`.edit-trigger[data-id="${CSS.escape(edit)}"]`); if (trigger) { trigger.dataset.revision = query.get('base_revision') || trigger.dataset.revision; trigger.click(); } else { resetEntryForm(); openModal('entry-modal'); } }
 });

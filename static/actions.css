@@ -576,3 +576,8 @@ html[data-theme="dark"] .limit-form select:hover { border-color: #4b6468; }
 html[data-theme="dark"] .limit-form select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(82,184,163,.16); }
 html[data-theme="dark"] .limit-form select option { background: #101b1d; color: var(--ink); }
 @media (max-width: 520px) { .limit-form { flex-wrap: wrap; } .limit-form select { min-width: 0; flex: 1 1 100%; } }
+.connection-status { position: fixed; top: 14px; left: 50%; z-index: 50; transform: translateX(-50%); padding: 8px 14px; border-radius: 999px; background: #fff; border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(27,43,55,.12); color: var(--muted); font-size: 12px; font-weight: 700; }
+.connection-status[data-state="offline"] { background: #fff1ef; color: #a9433d; border-color: #f0c4bf; }
+.connection-status[data-state="syncing"] { background: #f8eee0; color: #93621c; border-color: #ecd7b3; }
+.connection-status[data-state="pending"] { background: #f8eee0; color: #93621c; border-color: #ecd7b3; }
+.connection-status[data-state="online"] { background: #e3f2e9; color: #267248; border-color: #b9dfc7; }

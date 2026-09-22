@@ -17,8 +17,10 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='actions.css') }}">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='pwa.js') }}" defer></script>
 </head>
 <body>
+{% if session.user_id %}<div id="connection-status" class="connection-status" role="status" aria-live="polite" hidden></div>{% endif %}
 {% if not shared_report %}<button id="theme-toggle" class="theme-toggle" type="button" role="switch" aria-checked="false" aria-label="Ativar tema escuro">
   <span class="theme-toggle-track" aria-hidden="true"><span class="theme-toggle-thumb"></span></span>
   <span class="theme-label">Tema escuro</span>
