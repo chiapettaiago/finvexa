@@ -931,7 +931,9 @@ def create_app(config=None):
         for key, title, subtitle, predicate in group_definitions:
             items = [entry for entry in entries if predicate(entry)]
             if key == "dia-a-dia":
-                items.sort(key=lambda entry: (entry.expense_date is None, entry.expense_date, entry.description.casefold()))
+                dated_items = sorted((entry for entry in items if entry.expense_date is not None), key=lambda entry: (entry.expense_date, entry.description.casefold()), reverse=True)
+                undated_items = sorted((entry for entry in items if entry.expense_date is None), key=lambda entry: entry.description.casefold())
+                items = dated_items + undated_items
             entry_groups.append({"key": key, "title": title, "subtitle": subtitle, "entries": items, "total": sum((entry.amount for entry in items), Decimal(0))})
         expenses = sum((e.amount for e in entries if e.kind == "despesa"), Decimal(0))
         income = sum((e.amount for e in entries if e.kind == "receita"), Decimal(0))
@@ -957,7 +959,9 @@ def create_app(config=None):
         for key, title, subtitle, predicate in definitions:
             items = [entry for entry in entries if predicate(entry)]
             if key == "dia-a-dia":
-                items.sort(key=lambda entry: (entry.expense_date is None, entry.expense_date, entry.description.casefold()))
+                dated_items = sorted((entry for entry in items if entry.expense_date is not None), key=lambda entry: (entry.expense_date, entry.description.casefold()), reverse=True)
+                undated_items = sorted((entry for entry in items if entry.expense_date is None), key=lambda entry: entry.description.casefold())
+                items = dated_items + undated_items
             entry_groups.append({"key": key, "title": title, "subtitle": subtitle, "entries": items, "total": sum((entry.amount for entry in items), Decimal(0))})
         chart = []
         for month_number in range(1, 13):
@@ -1090,7 +1094,9 @@ def create_app(config=None):
         for title, predicate in groups:
             items = [entry for entry in entries if predicate(entry)]
             if title == "Despesas do dia a dia":
-                items.sort(key=lambda entry: (entry.expense_date is None, entry.expense_date, entry.description.casefold()))
+                dated_items = sorted((entry for entry in items if entry.expense_date is not None), key=lambda entry: (entry.expense_date, entry.description.casefold()), reverse=True)
+                undated_items = sorted((entry for entry in items if entry.expense_date is None), key=lambda entry: entry.description.casefold())
+                items = dated_items + undated_items
             entry_groups.append({"title": title, "entries": items})
         income = sum((entry.amount for entry in entries if entry.kind == "receita"), Decimal(0))
         expenses = sum((entry.amount for entry in entries if entry.kind == "despesa"), Decimal(0))

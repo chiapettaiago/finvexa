@@ -275,9 +275,9 @@ def test_login_create_entry_and_import(tmp_path):
     token = csrf(client)
     client.post('/entry/new', data={'csrf': token, 'description': 'Uber', 'kind': 'despesa', 'category': 'dia_a_dia', 'month': '2026-09', 'entry_date': '2026-09-05', 'amount': '13.27', 'repeat': 'never'})
     page = client.get('/?month=2026-09')
-    assert page.data.index(b'Uber') < page.data.index(b'Mercado')
+    assert page.data.index(b'Mercado') < page.data.index(b'Uber')
     reports = client.get('/reports?month=2026-09')
-    assert reports.data.index(b'Uber') < reports.data.index(b'Mercado')
+    assert reports.data.index(b'Mercado') < reports.data.index(b'Uber')
     token = csrf(client)
     workbook = BytesIO()
     from openpyxl import Workbook
