@@ -818,6 +818,20 @@ def create_app(config=None):
             db.session.commit()
             flash(f"Plano de {user.name or user.username or user.email} alterado para {PLANS[plan]['name']}.", "success")
         return redirect(url_for("admin_users"))
+    @app.post("/admin/users/<int:id>/role")
+    @admin_required
+    def update_role(id):
+        user = db.session.get(User, id) or abort(404)
+        role = request.form.get("role", "")
+        if role not in ("user", "admin"):
+            flash("Nível de permissão inválido.", "error")
+        elif user.id == g.current_user.id:
+            flash("Você não pode alterar sua própria permissão.", "error")
+        else:
+            user.is_admin = role == "admin"
+            db.session.commit()
+            flash(f"Permissão de {user.name or user.username or user.email} alterada para {'Administrador' if user.is_admin else 'Usuário'}.", "success")
+        return redirect(url_for("admin_users"))
     @app.post("/account/profile")
     @login_required
     def update_profile():
