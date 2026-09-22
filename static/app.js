@@ -11,6 +11,37 @@ document.addEventListener('DOMContentLoaded', () => {
       sidebarToggle.setAttribute('aria-label', isCollapsed ? 'Expandir menu' : 'Recolher menu');
     });
   }
+  const valuesToggle = document.getElementById('values-toggle');
+  if (valuesToggle) {
+    const storageKey = 'finvexa-hide-values';
+    const maskable = document.querySelectorAll('.metric strong, .metric small, .amount, .group-total');
+    const mask = (text) => text.replace(/-?R\$\s?-?[\d.,]+/g, 'R$ ••••');
+    let hidden = false;
+    try {
+      hidden = localStorage.getItem(storageKey) === 'true';
+    } catch (_error) {
+      // Preference just won't persist when storage is blocked.
+    }
+    const render = () => {
+      maskable.forEach((el) => {
+        if (el.dataset.realValue === undefined) el.dataset.realValue = el.textContent;
+        el.textContent = hidden ? mask(el.dataset.realValue) : el.dataset.realValue;
+      });
+      valuesToggle.textContent = hidden ? '🙈' : '👁';
+      valuesToggle.setAttribute('aria-pressed', String(hidden));
+      valuesToggle.setAttribute('aria-label', hidden ? 'Exibir valores' : 'Ocultar valores');
+    };
+    render();
+    valuesToggle.addEventListener('click', () => {
+      hidden = !hidden;
+      try {
+        localStorage.setItem(storageKey, String(hidden));
+      } catch (_error) {
+        // The toggle still applies to the current page.
+      }
+      render();
+    });
+  }
   const openModal = (id) => {
     const modal = document.getElementById(id);
     if (!modal || modal.open) return;
