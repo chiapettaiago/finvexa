@@ -1,4 +1,4 @@
-const VERSION = 'finvexa-v7';
+const VERSION = 'finvexa-v8';
 const STATIC_CACHE = `${VERSION}-static`;
 const PAGES_PREFIX = `${VERSION}-pages-`;
 const META_CACHE = `${VERSION}-meta`;
@@ -6,6 +6,10 @@ const scope = self.registration.scope;
 const appUrl = path => new URL(path, scope).href;
 const OFFLINE_URL = appUrl('static/offline.html');
 const ACTIVE_USER_URL = appUrl('__pwa_active_user__');
+// A connection can disappear without the browser immediately emitting an
+// offline event. Do not leave navigation (and its modal forms) waiting for a
+// network request that will never complete when an authenticated copy exists.
+const NAVIGATION_TIMEOUT_MS = 4000;
 const ASSETS = [
   'static/offline.html', 'static/style.css', 'static/actions.css',
   'static/app.js', 'static/pwa.js', 'static/theme.js',
@@ -38,6 +42,16 @@ async function refreshPage(url, userId) {
   const response = await fetch(request);
   if (cacheablePage(response, userId)) await (await caches.open(`${PAGES_PREFIX}${userId}`)).put(url, response.clone());
   return response;
+}
+
+function fetchNavigation(request) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('navigation timeout')), NAVIGATION_TIMEOUT_MS);
+    fetch(request).then(
+      response => { clearTimeout(timer); resolve(response); },
+      error => { clearTimeout(timer); reject(error); },
+    );
+  });
 }
 
 async function prefetchPages(urls, userId) {
@@ -90,7 +104,7 @@ self.addEventListener('fetch', event => {
     event.respondWith((async () => {
       const userId = await activeUser();
       try {
-        const response = await fetch(request);
+        const response = await fetchNavigation(request);
         if (userId && cacheablePage(response, userId)) {
           event.waitUntil((await caches.open(`${PAGES_PREFIX}${userId}`)).put(request, response.clone()));
         }

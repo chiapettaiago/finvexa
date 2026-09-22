@@ -41,7 +41,7 @@ test('PWA preloads pages, shows fresh server content, and falls back offline', a
     addEventListener(type, handler) { handlers[type] = handler; },
   };
   const code = readFileSync('static/sw.js', 'utf8');
-  runInNewContext(code, { self, caches, fetch: fetcher, Request, Response, URL, Promise });
+  runInNewContext(code, { self, caches, fetch: fetcher, Request, Response, URL, Promise, setTimeout, clearTimeout });
   const dispatch = async (type, extra = {}) => {
     const waits = [];
     let response;
@@ -62,6 +62,7 @@ test('PWA preloads pages, shows fresh server content, and falls back offline', a
   online = false;
   assert.equal(await (await dispatch('fetch', { request })).text(), 'original');
   assert.equal(await (await dispatch('fetch', { request: { url: `${scope}?modal=entry`, method: 'GET', mode: 'navigate' } })).text(), 'original');
+  assert.equal(await (await dispatch('fetch', { request: { url: `${scope}?modal=import`, method: 'GET', mode: 'navigate' } })).text(), 'original');
   online = true;
   serverVersion = 'atualizado';
   assert.equal(await (await dispatch('fetch', { request })).text(), 'atualizado');
