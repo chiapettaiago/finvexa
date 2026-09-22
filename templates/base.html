@@ -1,10 +1,15 @@
 <!doctype html>
 <html lang="pt-BR"{% if shared_report %} data-theme="light"{% endif %}>
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>{% block title %}{{ app_name }} | {{ app_slogan }}{% endblock %}</title>
   <meta name="description" content="{{ app_name }} — {{ app_slogan }} Plataforma financeira com IA, dashboards e relatórios.">
   <meta name="application-name" content="{{ app_name }}"><meta name="apple-mobile-web-app-title" content="{{ app_name }}">
+  <meta name="theme-color" content="#102a43">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
   <meta property="og:title" content="{{ app_name }}"><meta property="og:description" content="{{ app_slogan }}"><meta property="og:type" content="website">
   <meta name="twitter:card" content="summary"><meta name="twitter:title" content="{{ app_name }}"><meta name="twitter:description" content="{{ app_slogan }}">
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
