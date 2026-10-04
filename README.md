@@ -49,3 +49,15 @@ systemctl status checkout.service --no-pager
 O comando `is-enabled` deve retornar `enabled`, e o status deve mostrar `active (running)`. O serviço também reinicia automaticamente em caso de falha. Para consultar os logs, use `journalctl -u checkout.service -n 50 --no-pager`.
 
 Inclua `deploy/nginx-location.conf` no virtual host de `checkout.chiapettadev.tech`.
+
+## Contas empresariais
+
+No cadastro de uma nova conta (após assinatura ou por convite administrativo), escolha **Empresarial** e informe o nome da empresa. Contas pessoais existentes permanecem pessoais. O responsável gera convites por e-mail em **Minha conta**, copia os links para os colaboradores e pode revogar convites ou remover acessos. Os convites duram 72 horas e criam novos usuários; e-mails já cadastrados não são convertidos ou vinculados.
+
+Os membros compartilham lançamentos, comprovantes, importações, relatórios, análises e os limites do plano do responsável. Perfil e senha são individuais. A remoção de um membro mantém os dados financeiros na empresa.
+
+Para atualizar uma instalação existente antes de reiniciar o serviço:
+
+```bash
+.venv/bin/flask --app app upgrade-company-db
+```

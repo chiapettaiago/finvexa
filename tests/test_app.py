@@ -497,3 +497,119 @@ def test_subscription_unavailable_without_token_and_webhook_signature(tmp_path, 
     client = app.test_client()
     assert client.get('/assinar/basico').status_code == 503
     assert client.post('/webhooks/mercadopago', json={'data': {'id': 'x'}}, headers={'x-signature': 'ts=1,v1=errado'}).status_code == 401
+
+
+def test_new_company_registration_and_shared_access(tmp_path):
+    from app import Company, Subscription
+    app = create_app({'TESTING': True, 'SQLALCHEMY_DATABASE_URI': f"sqlite:///{tmp_path / 'company.db'}", 'SECRET_KEY': 'test'})
+    with app.app_context():
+        db.create_all()
+        db.session.add(User(name='Pessoal', email='personal@example.com', password=generate_password_hash('senha-segura')))
+        db.session.add(Subscription(token='company-registration', email='owner@example.com', plan='premium', status='authorized'))
+        db.session.commit()
+    owner = app.test_client()
+    response = owner.post('/cadastro/company-registration', data={'csrf': csrf(owner), 'password': 'senha-segura', 'account_type': 'company', 'company_name': 'Empresa Teste'})
+    assert response.status_code == 302
+    assert 'Olá, Empresa Teste!'.encode() in owner.get('/').data
+    with app.app_context():
+        company = db.session.query(Company).one()
+        assert db.session.get(User, 1).company_id is None
+        owner_id = company.owner_id
+        db.session.add(Entry(user_id=owner_id, description='Compartilhado', kind='receita', month=date(2026, 9, 1), amount=100))
+        db.session.add(Entry(user_id=1, description='Privado', kind='receita', month=date(2026, 9, 1), amount=50))
+        db.session.commit()
+    owner.post('/account/company/invitations', data={'csrf': csrf(owner), 'email': 'member@example.com'})
+    with app.app_context():
+        invitation = db.session.query(UserInvitation).one()
+        token = invitation.token
+        assert not invitation.is_admin
+    member = app.test_client()
+    bad = member.post(f'/invite/{token}', data={'csrf': csrf(member), 'name': 'Colaborador', 'username': 'member', 'email': 'wrong@example.com', 'password': 'senha-segura'})
+    assert 'destinatário'.encode() in bad.data
+    response = member.post(f'/invite/{token}', data={'csrf': csrf(member), 'name': 'Colaborador', 'username': 'member', 'email': 'member@example.com', 'password': 'senha-segura'})
+    assert response.status_code == 302
+    page = member.get('/?month=2026-09')
+    assert b'Compartilhado' in page.data and b'Privado' not in page.data
+    assert member.post('/account/company/invitations', data={'csrf': csrf(member), 'email': 'extra@example.com'}).status_code == 403
+    created = member.post('/entry/new', data={'csrf': csrf(member), 'description': 'Do colaborador', 'kind': 'despesa', 'category': 'dia_a_dia', 'month': '2026-09', 'entry_date': '2026-09-22', 'amount': '10.00', 'repeat': 'never'}, headers={'Accept': 'application/json'})
+    assert created.status_code == 200
+    assert b'Do colaborador' in owner.get('/?month=2026-09').data
+    with app.app_context():
+        member_id = db.session.query(User).filter_by(email='member@example.com').one().id
+    owner.post(f'/account/company/members/{member_id}/remove', data={'csrf': csrf(owner)})
+    assert b'Compartilhado' not in member.get('/?month=2026-09').data
+    assert 'Olá, Colaborador!'.encode() in member.get('/').data
+    assert owner.post('/account/company/members/1/remove', data={'csrf': csrf(owner)}).status_code == 403
+
+
+def test_company_upgrade_preserves_personal_accounts(tmp_path):
+    from sqlalchemy import text, inspect
+    app = create_app({'TESTING': True, 'SQLALCHEMY_DATABASE_URI': f"sqlite:///{tmp_path / 'upgrade.db'}", 'SECRET_KEY': 'test'})
+    with app.app_context():
+        with db.engine.begin() as connection:
+            connection.execute(text("CREATE TABLE user (id INTEGER PRIMARY KEY, email VARCHAR(254) NOT NULL UNIQUE, name VARCHAR(120), username VARCHAR(50), password VARCHAR(255) NOT NULL, avatar_file VARCHAR(80), is_admin BOOLEAN NOT NULL DEFAULT 0, ai_monthly_limit INTEGER NOT NULL DEFAULT 10, plan VARCHAR(20) NOT NULL DEFAULT 'basico')"))
+            connection.execute(text("INSERT INTO user (id, email, name, password) VALUES (1, 'person@example.com', 'Pessoa', 'hash')"))
+            connection.execute(text("CREATE TABLE user_invitation (id INTEGER PRIMARY KEY, email VARCHAR(254), is_admin BOOLEAN, token VARCHAR(255), invited_by_id INTEGER, created_at DATETIME, expires_at DATETIME, used_at DATETIME)"))
+    for _ in range(2):
+        result = app.test_cli_runner().invoke(args=['upgrade-db'])
+        assert result.exit_code == 0, result.output
+    with app.app_context():
+        assert db.session.get(User, 1).company_id is None
+
+
+def test_admin_creates_company_accounts_and_rejects_invalid_or_unauthorized_requests(tmp_path):
+    from app import Company
+    app = create_app({'TESTING': True, 'SQLALCHEMY_DATABASE_URI': f"sqlite:///{tmp_path / 'admin-company.db'}", 'SECRET_KEY': 'test'})
+    with app.app_context():
+        db.create_all()
+        db.session.add_all([
+            User(email='admin@example.com', password=generate_password_hash('senha-segura'), is_admin=True),
+            User(email='regular@example.com', password=generate_password_hash('senha-segura')),
+        ])
+        db.session.commit()
+    admin = app.test_client()
+    admin.post('/login', data={'csrf': csrf(admin), 'email': 'admin@example.com', 'password': 'senha-segura'})
+    page = admin.get('/admin/users')
+    assert b'name="account_type"' in page.data
+    assert b'name="company_name"' in page.data
+    data = {'csrf': csrf(admin), 'name': 'Responsável', 'username': 'owner', 'email': 'owner@example.com', 'password': 'senha-segura', 'role': 'user', 'account_type': 'company', 'company_name': 'Empresa Teste'}
+    data.pop('name'); data.pop('username')
+    for invalid in ({'company_name': ''}, {'company_name': 'x' * 121}, {'account_type': 'invalid'}):
+        admin.post('/admin/users', data={**data, **invalid})
+        with app.app_context():
+            assert db.session.query(User).count() == 2
+            assert db.session.query(Company).count() == 0
+    response = admin.post('/admin/users', data=data, follow_redirects=True)
+    assert 'Conta empresarial criada.'.encode() in response.data
+    with app.app_context():
+        company = db.session.query(Company).one()
+        owner = db.session.query(User).filter_by(email='owner@example.com').one()
+        assert company.name == 'Empresa Teste'
+        assert company.owner_id == owner.id
+        assert owner.company_id == company.id
+        assert owner.name == 'Empresa Teste' and owner.username == 'empresa_teste'
+        assert not owner.is_admin
+    assert b'name="member_ids"' in admin.get('/admin/users').data
+    with app.app_context():
+        regular_id = db.session.query(User).filter_by(email='regular@example.com').one().id
+    admin.post('/admin/users', data={**data, 'email': 'owner2@example.com', 'company_name': 'Outra', 'member_ids': [str(regular_id)]})
+    with app.app_context():
+        from app import CompanyAccess
+        other = db.session.query(Company).filter_by(name='Outra').one()
+        assert db.session.get(User, regular_id).company_id is None
+        assert db.session.query(CompanyAccess).filter_by(user_id=regular_id, company_id=other.id).count() == 1
+        other_id = other.id
+    regular = app.test_client()
+    login = regular.post('/login', data={'csrf': csrf(regular), 'email': 'regular@example.com', 'password': 'senha-segura'})
+    assert login.headers['Location'].endswith('/account/select')
+    assert b'Outra' in regular.get('/account/select').data
+    assert regular.post('/account/select', data={'csrf': csrf(regular), 'account': '999'}).status_code == 400
+    regular.post('/account/select', data={'csrf': csrf(regular), 'account': str(other_id)})
+    assert b'<strong>Outra</strong>' in regular.get('/').data
+    regular.post('/account/select', data={'csrf': csrf(regular), 'account': 'personal'})
+    assert b'<strong>Pessoal</strong>' in regular.get('/').data
+    assert regular.get('/admin/users').status_code == 403
+    assert regular.post('/admin/users', data={**data, 'csrf': csrf(regular), 'username': 'blocked', 'email': 'blocked@example.com'}).status_code == 403
+    with app.app_context():
+        assert db.session.query(User).count() == 4
+        assert db.session.query(Company).count() == 2

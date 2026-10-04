@@ -584,3 +584,29 @@ html[data-theme="dark"] .limit-form select option { background: #101b1d; color: 
 .connection-status[data-state="syncing"] { background: #f8eee0; color: #93621c; border-color: #ecd7b3; }
 .connection-status[data-state="pending"] { background: #f8eee0; color: #93621c; border-color: #ecd7b3; }
 .connection-status[data-state="online"] { background: #e3f2e9; color: #267248; border-color: #b9dfc7; }
+
+.company-fields { border: 1px solid var(--line, #ddd); border-radius: 12px; padding: 12px; display: grid; gap: 10px; }
+.company-fields[hidden] { display: none; }
+.company-fields legend { font-weight: 600; padding: 0 6px; }
+.member-picker { display: grid; gap: 6px; max-height: 180px; overflow: auto; }
+.member-picker .check-row { display: flex; align-items: center; gap: 8px; }
+.member-picker .check-row input { width: auto; }
+[data-personal-fields] { display: grid; gap: 14px; } [data-personal-fields][hidden] { display: none; }
+
+.account-choices { display: grid; gap: 10px; }
+.account-choices button { display: grid; gap: 2px; text-align: left; padding: 14px 16px; }
+.account-choices small { font-weight: 400; opacity: .8; }
+
+.sidebar-switch { margin-top: auto; margin-bottom: 8px; padding: 9px 10px; display: flex; align-items: center; gap: 11px; border: 1px solid var(--line); border-radius: 14px; background: var(--accent-soft); color: var(--ink); text-decoration: none; overflow: hidden; white-space: nowrap; transition: transform .18s, box-shadow .18s, border-color .18s; }
+.sidebar-switch:hover { transform: translateY(-1px); border-color: var(--accent); box-shadow: 0 8px 20px rgba(23,107,93,.14); }
+.sidebar-switch + .sidebar-account { margin-top: 0; }
+.switch-icon { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; background: var(--accent); color: #fff; }
+.switch-icon svg, .switch-chevron { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.switch-text { display: flex; min-width: 0; flex: 1; flex-direction: column; line-height: 1.25; }
+.switch-text small { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
+.switch-text strong { overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.switch-chevron { flex: 0 0 auto; color: var(--muted); }
+body.sidebar-collapsed .sidebar-switch { justify-content: center; padding: 8px 0; }
+@media (min-width: 801px) {
+  .sidebar-switch { margin-bottom: 62px; }
+}

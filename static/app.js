@@ -229,3 +229,21 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   if (query.get('modal') === 'suggestions') openModal('suggestions-modal'); if (query.get('modal') === 'entry') { const edit = query.get('edit'); const trigger = edit && document.querySelector(`.edit-trigger[data-id="${CSS.escape(edit)}"]`); if (trigger) { trigger.dataset.revision = query.get('base_revision') || trigger.dataset.revision; trigger.click(); } else { resetEntryForm(); openModal('entry-modal'); } }
 });
+
+document.querySelectorAll('[data-account-type]').forEach((select) => {
+  const fields = select.closest('form').querySelector('[data-company-fields]');
+  if (!fields) return;
+  const sync = () => {
+    const isCompany = select.value === 'company';
+    fields.hidden = !isCompany;
+    fields.querySelectorAll('input').forEach((input) => { input.disabled = !isCompany; });
+    select.closest('form').querySelectorAll('[data-personal-fields]').forEach((personal) => {
+      personal.hidden = isCompany;
+      personal.querySelectorAll('input').forEach((input) => { input.disabled = isCompany; input.required = !isCompany; });
+    });
+    const name = fields.querySelector('[name="company_name"]');
+    if (name) name.required = isCompany;
+  };
+  select.addEventListener('change', sync);
+  sync();
+});

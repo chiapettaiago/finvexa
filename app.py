@@ -64,12 +64,27 @@ def entry_report_row(entry):
         "Recebido" if entry.kind == "receita" and entry.paid else "Pago" if entry.paid else "Pendente",
     )
 
+class Company(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    owner_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, unique=True)
+
+
+class CompanyAccess(db.Model):
+    """Acesso de um usuário com conta pessoal própria a uma empresa (ele escolhe o contexto ao entrar)."""
+    __table_args__ = (db.UniqueConstraint("user_id", "company_id"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("company.id"), nullable=False, index=True)
+
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(254), unique=True, nullable=False)
     name = db.Column(db.String(120))
     username = db.Column(db.String(50), unique=True)
     password = db.Column(db.String(255), nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("company.id"), index=True)
     avatar_file = db.Column(db.String(80))
     is_admin = db.Column(db.Boolean, nullable=False, default=False)
     ai_monthly_limit = db.Column(db.Integer, nullable=False, default=10)
@@ -123,6 +138,7 @@ class SharedReport(db.Model):
 
 
 class UserInvitation(db.Model):
+    company_id = db.Column(db.Integer, db.ForeignKey("company.id"), index=True)
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(254), nullable=False, index=True)
     is_admin = db.Column(db.Boolean, nullable=False, default=False)
@@ -518,10 +534,27 @@ def create_app(config=None):
         if session.get("user_id"):
             session.permanent = True
         g.current_user = db.session.get(User, session["user_id"]) if session.get("user_id") else None
+        g.company = None
+        if g.current_user and g.current_user.company_id:
+            g.company = db.session.get(Company, g.current_user.company_id)
+        elif g.current_user and session.get("active_company"):
+            if db.session.scalar(select(CompanyAccess.id).where(CompanyAccess.user_id == g.current_user.id, CompanyAccess.company_id == session["active_company"])):
+                g.company = db.session.get(Company, session["active_company"])
+            else:
+                session.pop("active_company", None)
+        g.financial_user = db.session.get(User, g.company.owner_id) if g.company else g.current_user
+        if session.get("user_id") and not g.current_user:
+            session.clear()
+    def accessible_companies(user):
+        if not user or user.company_id:
+            return []
+        return db.session.scalars(select(Company).join(CompanyAccess, CompanyAccess.company_id == Company.id).where(CompanyAccess.user_id == user.id).order_by(Company.name)).all()
+    def financial_user_id():
+        return g.financial_user.id
     @app.context_processor
     def context():
         session.setdefault("csrf", secrets.token_hex(32))
-        return dict(csrf=session["csrf"], months=MONTHS, today=date.today(), current_user=g.current_user, plans=PLANS, app_name=app.config["APP_NAME"], app_slogan=app.config["APP_SLOGAN"])
+        return dict(csrf=session["csrf"], months=MONTHS, today=date.today(), current_user=g.current_user, company=g.company, account_choices=accessible_companies(g.current_user), financial_user=g.financial_user, plans=PLANS, app_name=app.config["APP_NAME"], app_slogan=app.config["APP_SLOGAN"])
     @app.before_request
     def csrf_check():
         if request.method == "POST" and request.endpoint != "mercadopago_webhook" and not secrets.compare_digest(session.get("csrf", "missing"), request.form.get("csrf", "")):
@@ -649,6 +682,91 @@ def create_app(config=None):
                 app.logger.exception("Falha ao processar webhook do Mercado Pago")
                 return "", 500
         return "", 200
+    def create_registration_company(user):
+        account_type = request.form.get("account_type", "personal")
+        if account_type not in ("personal", "company"):
+            raise ValueError("Tipo de conta inválido.")
+        if account_type == "company":
+            name = request.form.get("company_name", "").strip()
+            if not name or len(name) > 120:
+                raise ValueError("Informe o nome da empresa com até 120 caracteres.")
+            company = Company(name=name, owner_id=user.id)
+            db.session.add(company)
+            db.session.flush()
+            user.company_id = company.id
+            member_ids = {int(value) for value in request.form.getlist("member_ids") if value.isdigit()}
+            if member_ids:
+                members = db.session.scalars(select(User).where(User.id.in_(member_ids), User.company_id.is_(None), User.id != user.id)).all()
+                if len(members) != len(member_ids):
+                    raise ValueError("Um dos usuários selecionados não está disponível para a empresa.")
+                for member in members:
+                    db.session.add(CompanyAccess(user_id=member.id, company_id=company.id))
+
+    def company_username(company_name):
+        base = re.sub(r"[^a-z0-9]+", "_", unicodedata.normalize("NFKD", company_name).encode("ascii", "ignore").decode().lower()).strip("_")[:40] or "empresa"
+        candidate, n = base, 1
+        while db.session.scalar(select(User.id).where(User.username == candidate)):
+            n += 1
+            candidate = f"{base}_{n}"
+        return candidate
+
+    def company_identity(name, username):
+        if request.form.get("account_type") != "company":
+            return name, username
+        company_name = request.form.get("company_name", "").strip()
+        if not company_name or len(company_name) > 120:
+            raise ValueError("Informe o nome da empresa com até 120 caracteres.")
+        return company_name, company_username(company_name)
+
+    def company_owner():
+        if not g.company or g.company.owner_id != g.current_user.id:
+            abort(403)
+        return g.company
+
+    @app.post("/account/company/invitations")
+    @login_required
+    def company_invite():
+        company = company_owner()
+        email = request.form.get("email", "").strip().lower()
+        if "@" not in email or len(email) > 254:
+            flash("Informe um e-mail válido.", "error")
+        elif db.session.scalar(select(User).where(User.email == email)):
+            flash("Este e-mail já possui uma conta. Use outro e-mail para criar um novo acesso empresarial.", "error")
+        else:
+            db.session.add(UserInvitation(email=email, company_id=company.id, is_admin=False,
+                token=secrets.token_urlsafe(32), invited_by_id=g.current_user.id,
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=72)))
+            db.session.commit()
+            flash("Convite criado. Copie o link abaixo e envie ao colaborador. Válido por 72 horas.", "success")
+        return redirect(url_for("account"))
+
+    @app.post("/account/company/members/<int:id>/remove")
+    @login_required
+    def company_remove_member(id):
+        company = company_owner()
+        user = db.session.get(User, id) or abort(404)
+        access = db.session.scalar(select(CompanyAccess).where(CompanyAccess.user_id == user.id, CompanyAccess.company_id == company.id))
+        if access:
+            db.session.delete(access)
+        elif user.company_id != company.id or user.id == company.owner_id:
+            abort(403)
+        else:
+            user.company_id = None
+        db.session.commit()
+        flash("Acesso à empresa removido.", "success")
+        return redirect(url_for("account"))
+
+    @app.post("/account/company/invitations/<int:id>/revoke")
+    @login_required
+    def company_revoke_invitation(id):
+        company = company_owner()
+        invitation = db.session.get(UserInvitation, id) or abort(404)
+        if invitation.company_id != company.id:
+            abort(403)
+        invitation.expires_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return redirect(url_for("account"))
+
     @app.route("/cadastro/<token>", methods=["GET", "POST"])
     def register_subscriber(token):
         subscription = db.session.scalar(select(Subscription).where(Subscription.token == token))
@@ -659,6 +777,7 @@ def create_app(config=None):
             username = request.form.get("username", "").strip().lower()
             password = request.form.get("password", "")
             try:
+                name, username = company_identity(name, username)
                 if not name or len(name) > 120:
                     raise ValueError("Informe seu nome com até 120 caracteres.")
                 if not username or len(username) > 50 or not username.replace("_", "").replace(".", "").isalnum():
@@ -670,6 +789,7 @@ def create_app(config=None):
                 user = User(name=name, username=username, email=subscription.email, password=generate_password_hash(password), plan=subscription.plan)
                 db.session.add(user)
                 db.session.flush()
+                create_registration_company(user)
                 subscription.user_id = user.id
                 db.session.add(UserAccessLog(user_id=user.id))
                 db.session.commit()
@@ -695,9 +815,27 @@ def create_app(config=None):
                 session["user_id"] = user.id
                 db.session.add(UserAccessLog(user_id=user.id))
                 db.session.commit()
+                if accessible_companies(user):
+                    return redirect(url_for("select_account"))
                 return redirect(url_for("index"))
             flash("E-mail ou senha incorretos.", "error")
         return render_template("login.html")
+    @app.route("/account/select", methods=["GET", "POST"])
+    @login_required
+    def select_account():
+        companies = accessible_companies(g.current_user)
+        if not companies:
+            return redirect(url_for("index"))
+        if request.method == "POST":
+            choice = request.form.get("account", "personal")
+            if choice == "personal":
+                session.pop("active_company", None)
+            elif choice.isdigit() and int(choice) in {c.id for c in companies}:
+                session["active_company"] = int(choice)
+            else:
+                abort(400, "Conta inválida.")
+            return redirect(url_for("index"))
+        return render_template("select_account.html", companies=companies)
     @app.get("/account")
     @login_required
     def account():
@@ -710,10 +848,12 @@ def create_app(config=None):
                 db.session.rollback()
                 app.logger.exception("Falha ao sincronizar assinatura na conta")
         month_start = datetime(date.today().year, date.today().month, 1, tzinfo=timezone.utc)
-        ai_used = db.session.scalar(select(func.count()).select_from(ClaudeAnalysis).where(ClaudeAnalysis.user_id == user.id, ClaudeAnalysis.created_at >= month_start))
+        ai_used = db.session.scalar(select(func.count()).select_from(ClaudeAnalysis).where(ClaudeAnalysis.user_id == financial_user_id(), ClaudeAnalysis.created_at >= month_start))
         now = datetime.now(timezone.utc)
-        links_active = sum(1 for link in db.session.scalars(select(SharedReport).where(SharedReport.user_id == user.id)) if utc_datetime(link.expires_at) > now)
-        return render_template("account.html", user=user, subscription=subscription, ai_used=ai_used, links_active=links_active)
+        links_active = sum(1 for link in db.session.scalars(select(SharedReport).where(SharedReport.user_id == financial_user_id())) if utc_datetime(link.expires_at) > now)
+        return render_template("account.html", user=user, subscription=subscription, ai_used=ai_used, links_active=links_active,
+            members=db.session.scalars(select(User).where(or_(User.company_id == g.company.id, User.id.in_(select(CompanyAccess.user_id).where(CompanyAccess.company_id == g.company.id))))).all() if g.company else [],
+            company_invitations=db.session.scalars(select(UserInvitation).where(UserInvitation.company_id == g.company.id, UserInvitation.used_at.is_(None), UserInvitation.expires_at > datetime.now(timezone.utc))).all() if g.company and g.company.owner_id == user.id else [])
 
     @app.post("/account/subscription/cancel")
     @login_required
@@ -749,6 +889,8 @@ def create_app(config=None):
             email = request.form.get("email", "").strip().lower()
             password = request.form.get("password", "")
             try:
+                if not invitation.company_id:
+                    name, username = company_identity(name, username)
                 if not name or len(name) > 120:
                     raise ValueError("Informe seu nome com até 120 caracteres.")
                 if not username or len(username) > 50 or not username.replace("_", "").replace(".", "").isalnum():
@@ -759,7 +901,9 @@ def create_app(config=None):
                     raise ValueError("A senha deve ter pelo menos 10 caracteres.")
                 if db.session.scalar(select(User).where(or_(User.email == email, User.username == username))):
                     raise ValueError("O e-mail ou nome de usuário já está em uso.")
-                user = User(name=name, username=username, email=email, password=generate_password_hash(password), is_admin=invitation.is_admin)
+                if invitation.company_id and email != invitation.email:
+                    raise ValueError("Use o e-mail destinatário deste convite.")
+                user = User(name=name, username=username, email=email, password=generate_password_hash(password), is_admin=invitation.is_admin, company_id=invitation.company_id)
                 claimed = db.session.execute(
                     update(UserInvitation)
                     .where(UserInvitation.id == invitation.id, UserInvitation.used_at.is_(None), UserInvitation.expires_at > now)
@@ -771,6 +915,8 @@ def create_app(config=None):
                     abort(410, "Este convite expirou ou já foi utilizado.")
                 db.session.add(user)
                 db.session.flush()
+                if not invitation.company_id:
+                    create_registration_company(user)
                 db.session.add(UserAccessLog(user_id=user.id))
                 db.session.commit()
                 session.clear()
@@ -791,6 +937,7 @@ def create_app(config=None):
             password = request.form.get("password", "")
             role = request.form.get("role", "user")
             try:
+                name, username = company_identity(name, username)
                 if not name or len(name) > 120:
                     raise ValueError("Informe o nome com até 120 caracteres.")
                 if not username or len(username) > 50 or not username.replace("_", "").replace(".", "").isalnum():
@@ -803,9 +950,12 @@ def create_app(config=None):
                     raise ValueError("Nível de permissão inválido.")
                 if db.session.scalar(select(User).where(or_(User.email == email, User.username == username))):
                     raise ValueError("O e-mail ou nome de usuário já está em uso.")
-                db.session.add(User(name=name, username=username, email=email, password=generate_password_hash(password), is_admin=role == "admin"))
+                user = User(name=name, username=username, email=email, password=generate_password_hash(password), is_admin=role == "admin")
+                db.session.add(user)
+                db.session.flush()
+                create_registration_company(user)
                 db.session.commit()
-                flash("Usuário criado.", "success")
+                flash("Conta empresarial criada." if user.company_id else "Usuário criado.", "success")
             except ValueError as error:
                 db.session.rollback()
                 flash(str(error), "error")
@@ -815,7 +965,8 @@ def create_app(config=None):
         invitations = db.session.scalars(select(UserInvitation).where(UserInvitation.used_at.is_(None)).order_by(UserInvitation.expires_at.desc())).all()
         now = datetime.now(timezone.utc)
         invitation_items = [{"invitation": invitation, "expired": utc_datetime(invitation.expires_at) <= now} for invitation in invitations]
-        return render_template("admin_users.html", users=users, invitations=invitation_items, last_accesses=last_accesses)
+        available_members = [u for u in users if not u.company_id]
+        return render_template("admin_users.html", users=users, invitations=invitation_items, last_accesses=last_accesses, available_members=available_members)
     @app.post("/admin/invitations")
     @admin_required
     def create_invitation():
@@ -946,7 +1097,7 @@ def create_app(config=None):
             selected = datetime.strptime(request.args.get("month", date.today().strftime("%Y-%m")), "%Y-%m").date()
         except ValueError:
             abort(400)
-        entries = db.session.scalars(select(Entry).where(Entry.user_id == session["user_id"], Entry.month == selected, Entry.deleted_at.is_(None))).all()
+        entries = db.session.scalars(select(Entry).where(Entry.user_id == financial_user_id(), Entry.month == selected, Entry.deleted_at.is_(None))).all()
         entries.sort(key=lambda entry: entry.description.casefold())
         group_definitions = (
             ("receitas", "Receitas", "Valores previstos para entrar", lambda entry: entry.kind == "receita"),
@@ -965,7 +1116,7 @@ def create_app(config=None):
         income = sum((e.amount for e in entries if e.kind == "receita"), Decimal(0))
         paid = sum((e.amount for e in entries if e.kind == "despesa" and e.paid), Decimal(0))
         received = sum((e.amount for e in entries if e.kind == "receita" and e.paid), Decimal(0))
-        analyses = db.session.scalars(select(ClaudeAnalysis).where(ClaudeAnalysis.user_id == session["user_id"]).order_by(ClaudeAnalysis.created_at.desc()).limit(30)).all()
+        analyses = db.session.scalars(select(ClaudeAnalysis).where(ClaudeAnalysis.user_id == financial_user_id()).order_by(ClaudeAnalysis.created_at.desc()).limit(30)).all()
         return render_template("index.html", entries=entries, entry_groups=entry_groups, selected=selected, expenses=expenses, income=income, paid=paid, received=received, analyses=analyses)
     @app.get("/api/entry-revisions")
     @login_required
@@ -975,7 +1126,7 @@ def create_app(config=None):
             ids = [int(value) for value in raw_ids.split(",") if value][:100]
         except ValueError:
             return jsonify(error="IDs inválidos."), 400
-        entries = db.session.scalars(select(Entry).where(Entry.user_id == session["user_id"], Entry.id.in_(ids))).all() if ids else []
+        entries = db.session.scalars(select(Entry).where(Entry.user_id == financial_user_id(), Entry.id.in_(ids))).all() if ids else []
         return jsonify(revisions={str(entry.id): entry.revision or 1 for entry in entries if entry.deleted_at is None})
     @app.get("/reports")
     @login_required
@@ -984,7 +1135,7 @@ def create_app(config=None):
             selected = datetime.strptime(request.args.get("month", date.today().strftime("%Y-%m")), "%Y-%m").date()
         except ValueError:
             abort(400)
-        year_entries = db.session.scalars(select(Entry).where(Entry.user_id == session["user_id"], Entry.deleted_at.is_(None), Entry.month >= date(selected.year, 1, 1), Entry.month <= date(selected.year, 12, 1))).all()
+        year_entries = db.session.scalars(select(Entry).where(Entry.user_id == financial_user_id(), Entry.deleted_at.is_(None), Entry.month >= date(selected.year, 1, 1), Entry.month <= date(selected.year, 12, 1))).all()
         entries = sorted((entry for entry in year_entries if entry.month == selected), key=lambda entry: entry.description.casefold())
         definitions = (
             ("receitas", "Receitas", "Valores previstos para entrar", lambda entry: entry.kind == "receita"),
@@ -1012,7 +1163,7 @@ def create_app(config=None):
             selected = datetime.strptime(month_value, "%Y-%m").date()
         except (TypeError, ValueError):
             abort(400, "Mês de referência inválido.")
-        entries = db.session.scalars(select(Entry).where(Entry.user_id == session["user_id"], Entry.month == selected, Entry.deleted_at.is_(None))).all()
+        entries = db.session.scalars(select(Entry).where(Entry.user_id == financial_user_id(), Entry.month == selected, Entry.deleted_at.is_(None))).all()
         entries.sort(key=lambda entry: entry.description.casefold())
         income = sum((entry.amount for entry in entries if entry.kind == "receita"), Decimal(0))
         expenses = sum((entry.amount for entry in entries if entry.kind == "despesa"), Decimal(0))
@@ -1079,24 +1230,24 @@ def create_app(config=None):
     @login_required
     def create_shared_report():
         selected, _entries, _income, _expenses = report_data(request.form.get("month"))
-        share_limit = g.current_user.plan_info["share_links"]
+        share_limit = g.financial_user.plan_info["share_links"]
         if share_limit is not None:
             now = datetime.now(timezone.utc)
-            active = sum(1 for link in db.session.scalars(select(SharedReport).where(SharedReport.user_id == session["user_id"])) if utc_datetime(link.expires_at) > now)
+            active = sum(1 for link in db.session.scalars(select(SharedReport).where(SharedReport.user_id == financial_user_id())) if utc_datetime(link.expires_at) > now)
             if active >= share_limit:
-                flash("O plano Básico não inclui links de compartilhamento." if share_limit == 0 else f"Você atingiu o limite de {share_limit} links ativos do plano {g.current_user.plan_info['name']}. Aguarde um link expirar ou mude de plano.", "error")
+                flash("O plano Básico não inclui links de compartilhamento." if share_limit == 0 else f"Você atingiu o limite de {share_limit} links ativos do plano {g.financial_user.plan_info['name']}. Aguarde um link expirar ou mude de plano.", "error")
                 return redirect(url_for("reports", month=selected.strftime("%Y-%m")))
-        payload = json.dumps({"user_id": session["user_id"], "month": selected.strftime("%Y-%m")}).encode()
+        payload = json.dumps({"user_id": financial_user_id(), "month": selected.strftime("%Y-%m")}).encode()
         token = app.config["REPORT_SHARE_CIPHER"].encrypt(payload).decode()
         created_at = datetime.now(timezone.utc)
-        db.session.add(SharedReport(user_id=session["user_id"], month=selected, token=token, created_at=created_at, expires_at=created_at + timedelta(hours=3)))
+        db.session.add(SharedReport(user_id=financial_user_id(), month=selected, token=token, created_at=created_at, expires_at=created_at + timedelta(hours=3)))
         db.session.commit()
         return redirect(url_for("reports", month=selected.strftime("%Y-%m"), share=token))
     @app.get("/shared-links")
     @login_required
     def shared_links():
         now = datetime.now(timezone.utc)
-        links = db.session.scalars(select(SharedReport).where(SharedReport.user_id == session["user_id"]).order_by(SharedReport.created_at.desc())).all()
+        links = db.session.scalars(select(SharedReport).where(SharedReport.user_id == financial_user_id()).order_by(SharedReport.created_at.desc())).all()
         items = []
         for link in links:
             expires_at = link.expires_at.replace(tzinfo=timezone.utc) if link.expires_at.tzinfo is None else link.expires_at
@@ -1157,14 +1308,14 @@ def create_app(config=None):
             selected = datetime.strptime(request.args.get("month", date.today().strftime("%Y-%m")), "%Y-%m").date()
         except ValueError:
             abort(400)
-        annual = db.session.scalars(select(Entry).where(Entry.user_id == session["user_id"], Entry.deleted_at.is_(None), Entry.month >= date(selected.year, 1, 1), Entry.month <= date(selected.year, 12, 1))).all()
+        annual = db.session.scalars(select(Entry).where(Entry.user_id == financial_user_id(), Entry.deleted_at.is_(None), Entry.month >= date(selected.year, 1, 1), Entry.month <= date(selected.year, 12, 1))).all()
         grid = {}
         for entry in annual:
             grid.setdefault((entry.description, entry.kind), {}).setdefault(entry.month.month, []).append(entry)
         annual_rows = sorted(grid.items(), key=lambda item: item[0][0].casefold())
         return render_template("annual_planning.html", selected=selected, annual_rows=annual_rows)
     def owned(id):
-        return db.session.scalar(select(Entry).where(Entry.id == id, Entry.user_id == session["user_id"], Entry.deleted_at.is_(None))) or abort(404)
+        return db.session.scalar(select(Entry).where(Entry.id == id, Entry.user_id == financial_user_id(), Entry.deleted_at.is_(None))) or abort(404)
     def begin_idempotency():
         key = request.headers.get("X-Idempotency-Key", "").strip()
         if not key:
@@ -1255,7 +1406,7 @@ def create_app(config=None):
                 for offset in range(repeat):
                     month_index = month.year*12 + month.month-1+offset
                     target = date(month_index//12, month_index%12+1, 1)
-                    obj = entry or Entry(user_id=session["user_id"])
+                    obj = entry or Entry(user_id=financial_user_id())
                     obj.description, obj.kind, obj.category, obj.month, obj.amount = description, kind, category, target, amount
                     obj.expense_date = entry_date if category == "dia_a_dia" else None
                     obj.due = None if category == "dia_a_dia" else entry_date if not offset or not entry_date else date(target.year, target.month, min(entry_date.day, calendar.monthrange(target.year, target.month)[1]))
@@ -1343,13 +1494,13 @@ def create_app(config=None):
             selected = datetime.strptime(request.form.get("month", ""), "%Y-%m").date()
         except ValueError:
             return jsonify(error="Mês de referência inválido."), 400
-        current_user = g.current_user
+        current_user = g.financial_user
         usage_start = datetime(date.today().year, date.today().month, 1, tzinfo=timezone.utc)
         usage = db.session.scalar(select(db.func.count()).select_from(ClaudeAnalysis).where(ClaudeAnalysis.user_id == current_user.id, ClaudeAnalysis.created_at >= usage_start))
         ai_limit = current_user.plan_info["ai"]
         if usage >= ai_limit:
             return jsonify(error=f"Você atingiu o limite de {ai_limit} sugestões de IA do plano {current_user.plan_info['name']} neste mês."), 429
-        entries = db.session.scalars(select(Entry).where(Entry.user_id == session["user_id"], Entry.month == selected, Entry.deleted_at.is_(None))).all()
+        entries = db.session.scalars(select(Entry).where(Entry.user_id == financial_user_id(), Entry.month == selected, Entry.deleted_at.is_(None))).all()
         pending = [entry for entry in entries if not entry.paid]
         income = sum((entry.amount for entry in entries if entry.kind == "receita"), Decimal(0))
         expenses = sum((entry.amount for entry in entries if entry.kind == "despesa"), Decimal(0))
@@ -1396,7 +1547,7 @@ Responda em português do Brasil, de forma curta e prática. Em toda resposta, c
             suggestion = "\n".join(block.text for block in message.content if block.type == "text").strip()
             if not suggestion:
                 raise ValueError("Resposta vazia")
-            analysis = ClaudeAnalysis(user_id=session["user_id"], month=selected, content=suggestion, model=model)
+            analysis = ClaudeAnalysis(user_id=financial_user_id(), month=selected, content=suggestion, model=model)
             db.session.add(analysis)
             db.session.commit()
             return jsonify(suggestion=suggestion, saved=True, created_at=br_datetime(analysis.created_at))
@@ -1418,12 +1569,12 @@ Responda em português do Brasil, de forma curta e prática. Em toda resposta, c
                 if not 1900 <= year <= 2100:
                     raise ValueError("Ano deve estar entre 1900 e 2100.")
                 parsed = read_excel(file, year)
-                existing = db.session.scalars(select(Entry).where(Entry.user_id == session["user_id"], Entry.deleted_at.is_(None))).all()
+                existing = db.session.scalars(select(Entry).where(Entry.user_id == financial_user_id(), Entry.deleted_at.is_(None))).all()
                 signature = lambda e: (e.description, e.kind, e.month, e.due, e.amount, e.paid)
                 seen = {signature(e) for e in existing}
                 count = 0
                 for data in parsed:
-                    e = Entry(user_id=session["user_id"], **data)
+                    e = Entry(user_id=financial_user_id(), **data)
                     if signature(e) not in seen:
                         db.session.add(e)
                         seen.add(signature(e))
@@ -1496,7 +1647,23 @@ Responda em português do Brasil, de forma curta e prática. Em toda resposta, c
                 connection.execute(text("UPDATE user SET plan = 'premium' WHERE is_admin = 1"))
                 connection.execute(text("UPDATE user SET plan = 'padrao' WHERE is_admin = 0"))
             connection.execute(text("UPDATE user SET is_admin = 1 WHERE username = 'chiapettaiago'"))
+        upgrade_company_schema()
         click.echo("Estrutura do banco atualizada.")
+    def upgrade_company_schema():
+        db.create_all()
+        user_columns = {column["name"] for column in inspect(db.engine).get_columns("user")}
+        invitation_columns = {column["name"] for column in inspect(db.engine).get_columns("user_invitation")}
+        with db.engine.begin() as connection:
+            if "company_id" not in user_columns:
+                connection.execute(text("ALTER TABLE user ADD COLUMN company_id INTEGER"))
+            if "company_id" not in invitation_columns:
+                connection.execute(text("ALTER TABLE user_invitation ADD COLUMN company_id INTEGER"))
+
+    @app.cli.command("upgrade-company-db")
+    def upgrade_company_db():
+        upgrade_company_schema()
+        click.echo("Estrutura de contas empresariais atualizada. Contas existentes preservadas.")
+
     @app.cli.command("create-user")
     @click.argument("email")
     @click.password_option(confirmation_prompt=True)
