@@ -228,6 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
     openModal('import-modal');
   }
   if (query.get('modal') === 'suggestions') openModal('suggestions-modal'); if (query.get('modal') === 'entry') { const edit = query.get('edit'); const trigger = edit && document.querySelector(`.edit-trigger[data-id="${CSS.escape(edit)}"]`); if (trigger) { trigger.dataset.revision = query.get('base_revision') || trigger.dataset.revision; trigger.click(); } else { resetEntryForm(); openModal('entry-modal'); } }
+  if (query.has('modal')) { const clean = new URL(location.href); ['modal', 'edit', 'base_revision'].forEach((key) => clean.searchParams.delete(key)); history.replaceState(null, '', clean.pathname + clean.search + clean.hash); }
 });
 
 document.querySelectorAll('[data-account-type]').forEach((select) => {
