@@ -391,6 +391,14 @@ def test_login_create_entry_and_import(tmp_path):
         db.session.add(deleted_entry)
         db.session.commit()
         deleted_entry_id = deleted_entry.id
+    report_before_delete = client.get('/reports?month=2026-09')
+    assert f'data-confirm-action="/entry/{deleted_entry_id}/delete"' in report_before_delete.text
+    assert '⌫ Excluir' in report_before_delete.text
+    assert 'removido definitivamente' not in report_before_delete.text
+    unauthorized_client = app.test_client()
+    with unauthorized_client.session_transaction() as session:
+        session['user_id'] = invited_user.id
+    assert unauthorized_client.post(f'/entry/{deleted_entry_id}/delete', data={'csrf': csrf(unauthorized_client)}).status_code == 404
     response = client.post(f'/entry/{deleted_entry_id}/delete', data={'csrf': csrf(client)}, follow_redirects=True)
     assert response.status_code == 200
     assert 'Lançamento excluído.'.encode() in response.data
@@ -399,6 +407,10 @@ def test_login_create_entry_and_import(tmp_path):
         deleted_entry = db.session.get(Entry, deleted_entry_id)
         assert deleted_entry is not None
         assert deleted_entry.deleted_at is not None
+        assert deleted_entry.description == 'Apagar depois'
+        assert deleted_entry.amount == Decimal('10.00')
+        assert deleted_entry.revision == 2
+    assert 'Apagar depois' not in client.get('/reports?month=2026-09').text
     assert client.post(f'/entry/{deleted_entry_id}/toggle', data={'csrf': csrf(client)}).status_code == 404
     assert client.get(f'/entry/{deleted_entry_id}/receipt').status_code == 404
 

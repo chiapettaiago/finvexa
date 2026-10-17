@@ -126,19 +126,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }));
   document.querySelectorAll('.edit-trigger').forEach((button) => button.addEventListener('click', () => { entryForm.dataset.editing = 'true'; entryForm.action = newEntryAction.replace(/\/new$/, `/${button.dataset.id}/edit`); window.FinvexaPWA?.setBaseRevision(entryForm, button.dataset.revision); entryForm.elements.description.value = button.dataset.description; entryForm.elements.kind.value = button.dataset.kind; entryForm.elements.category.value = button.dataset.category || 'fixa'; entryForm.elements.month.value = button.dataset.month; entryForm.elements.entry_date.value = button.dataset.date; entryForm.elements.amount.value = button.dataset.amount; entryForm.elements.paid.checked = button.dataset.paid === 'true'; receiptHelp.textContent = button.dataset.receipt ? `Atual: ${button.dataset.receipt}. Selecione outro arquivo para substituir.` : 'Arquivo opcional de até 20 MB.'; entryTitle.textContent = 'Editar lançamento'; updateEntryFields(); }));
   const confirmModal = document.getElementById('confirm-modal');
-  document.querySelectorAll('.table-action[href$="/edit"]').forEach((editLink) => {
-    const match = editLink.getAttribute('href').match(/\/entry\/(\d+)\/edit$/);
-    if (!match) return;
-    const deleteButton = document.createElement('button');
-    deleteButton.type = 'button';
-    deleteButton.className = 'icon-button delete-trigger';
-    deleteButton.textContent = '⌫';
-    deleteButton.setAttribute('aria-label', 'Excluir lançamento');
-    deleteButton.dataset.confirmAction = editLink.href.replace(/\/edit$/, '/delete');
-    deleteButton.dataset.confirmTitle = 'Excluir lançamento?';
-    deleteButton.dataset.confirmText = 'O lançamento deixará de aparecer no sistema, mas será preservado no banco de dados.';
-    editLink.insertAdjacentElement('afterend', deleteButton);
-  });
   document.querySelectorAll('[data-confirm-action]').forEach((button) => button.addEventListener('click', () => { const confirmForm = document.getElementById('confirm-form'); confirmForm.action = button.dataset.confirmAction; window.FinvexaPWA?.setBaseRevision(confirmForm, button.dataset.revision); document.getElementById('confirm-title').textContent = button.dataset.confirmTitle; document.getElementById('confirm-text').textContent = button.dataset.confirmText; openModal('confirm-modal'); }));
   const receiptModal = document.getElementById('receipt-modal');
   if (receiptModal) {

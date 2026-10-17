@@ -1,4 +1,4 @@
-const VERSION = 'finvexa-v9';
+const VERSION = 'finvexa-v10';
 const STATIC_CACHE = `${VERSION}-static`;
 const PAGES_PREFIX = `${VERSION}-pages-`;
 const META_CACHE = `${VERSION}-meta`;
